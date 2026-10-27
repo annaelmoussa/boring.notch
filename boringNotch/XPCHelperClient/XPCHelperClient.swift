@@ -241,6 +241,23 @@ final class XPCHelperClient: NSObject {
             return false
         }
     }
+
+    // MARK: - Coding Agents
+
+    nonisolated func runAgentCLI(_ tool: String, arguments: [String]) async -> Data? {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.runAgentCLI(tool, arguments: arguments) { data in
+                    continuation.resume(returning: data)
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
 }
 
 extension Notification.Name {

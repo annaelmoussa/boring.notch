@@ -139,6 +139,57 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
         reply(false)
     }
 
+    // MARK: - Coding agent CLIs
+
+    private static let agentCLIs: Set<String> = ["herdr", "orca"]
+    private static let agentCLISearchPaths = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        NSHomeDirectory() + "/.local/bin",
+        NSHomeDirectory() + "/.cargo/bin",
+    ]
+    private static let agentCLITimeout: TimeInterval = 5
+
+    /// Runs an allowlisted agent CLI and replies with its stdout, or nil on failure.
+    @objc func runAgentCLI(_ tool: String, arguments: [String], with reply: @escaping (Data?) -> Void) {
+        guard Self.agentCLIs.contains(tool),
+              let executable = Self.agentCLISearchPaths
+                .map({ URL(fileURLWithPath: $0).appendingPathComponent(tool) })
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) })
+        else {
+            reply(nil)
+            return
+        }
+
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = NSHomeDirectory()
+        environment["PATH"] = (Self.agentCLISearchPaths + ["/usr/bin", "/bin"]).joined(separator: ":")
+        process.environment = environment
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            reply(nil)
+            return
+        }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.agentCLITimeout) {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global().async {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            reply(process.terminationStatus == 0 ? data : nil)
+        }
+    }
+
     // MARK: - Private helpers for DisplayServices / IOKit access
     private func displayServicesGetBrightness(displayID: CGDirectDisplayID, out: inout Float) -> Bool {
         guard let sym = dlsym(DisplayServicesHandle.handle, "DisplayServicesGetBrightness") else { return false }

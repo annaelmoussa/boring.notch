@@ -105,6 +105,16 @@ brew install --cask TheBoredTeam/boring-notch/boring-notch
 - Use the controls to manage your music like a rockstar.
 - Click the star in your menu bar to customize your notch to your heart's content.
 
+## Coding agents
+
+The notch shows what your coding agents are doing in [Herdr](https://herdr.dev) and [Orca](https://github.com/stablyai/orca).
+
+- **Closed notch:** a status icon and a counter while agents are working or waiting for you.
+- **Alerts:** the notch widens when an agent needs input or finishes its work.
+- **Agents tab:** every agent, most urgent first, with its workspace, status and elapsed time. Click a row to jump to that agent.
+
+Agent states are read from the `herdr` and `orca` command line tools, which must be installed in `/opt/homebrew/bin`, `/usr/local/bin` or `~/.local/bin`. Sources and alerts can be turned on or off in **Settings → Agents**.
+
 ## 📋 Roadmap
 - [x] Playback live activity 🎧
 - [x] Calendar integration 📆
