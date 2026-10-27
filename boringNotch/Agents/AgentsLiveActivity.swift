@@ -55,7 +55,7 @@ struct AgentsLiveActivity: View {
                 }
                 .frame(width: isExpanded ? 420 : vm.closedNotchSize.width - cornerRadiusInsets.closed.top)
 
-            Text("\(max(count, 1))")
+            Text(count > 0 ? "\(count)" : "")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(status.color)

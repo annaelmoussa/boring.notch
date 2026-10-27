@@ -139,7 +139,12 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
         reply(false)
     }
 
-    // MARK: - Coding agent CLIs
+    // MARK: - Coding agents
+
+    /// Long-poll: replies with the Herdr snapshot and Orca worktrees once they differ from `generation`.
+    @objc func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, Data?, Data?) -> Void) {
+        AgentEventMonitor.shared.waitForUpdate(after: generation, reply: reply)
+    }
 
     private static let agentCLIs: Set<String> = ["herdr", "orca"]
     private static let agentCLISearchPaths = [
@@ -150,7 +155,7 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
     ]
     private static let agentCLITimeout: TimeInterval = 5
 
-    /// Runs an allowlisted agent CLI and replies with its stdout, or nil on failure.
+    /// Runs an allowlisted agent CLI and replies with its stdout, or nil on failure. Used for user actions only.
     @objc func runAgentCLI(_ tool: String, arguments: [String], with reply: @escaping (Data?) -> Void) {
         guard Self.agentCLIs.contains(tool),
               let executable = Self.agentCLISearchPaths

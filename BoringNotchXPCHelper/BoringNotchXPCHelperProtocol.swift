@@ -20,7 +20,8 @@ import Foundation
     func isScreenBrightnessAvailable(with reply: @escaping (Bool) -> Void)
     func currentScreenBrightness(with reply: @escaping (NSNumber?) -> Void)
     func setScreenBrightness(_ value: Float, with reply: @escaping (Bool) -> Void)
-    // Coding agent CLIs (herdr, orca), run outside the app sandbox
+    // Coding agents (Herdr, Orca), reached outside the app sandbox
+    func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, Data?, Data?) -> Void)
     func runAgentCLI(_ tool: String, arguments: [String], with reply: @escaping (Data?) -> Void)
 }
 

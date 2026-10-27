@@ -2,25 +2,25 @@
 //  AgentSources.swift
 //  boringNotch
 //
-//  Reads agent state from workspace manager CLIs. The CLIs run in the XPC helper
-//  because the sandboxed app cannot reach their local sockets.
+//  Turns the raw state pushed by the XPC helper into agent sessions, and focuses agents.
+//  The helper talks to the tools' local sockets, which the sandboxed app cannot reach.
 //
 
 import AppKit
 import Foundation
 
-protocol AgentSessionSource {
-    func fetchSessions() async -> [AgentSession]
-    func focus(_ session: AgentSession) async
-}
-
-private struct CLIResponse<Result: Decodable>: Decodable {
+/// Herdr socket responses and Orca runtime responses share the `{"result": ...}` envelope.
+private struct Response<Result: Decodable>: Decodable {
     let result: Result
 }
 
-private func runCLI<Result: Decodable>(_ tool: String, _ arguments: [String], as _: Result.Type) async -> Result? {
-    guard let data = await XPCHelperClient.shared.runAgentCLI(tool, arguments: arguments) else { return nil }
-    return try? JSONDecoder().decode(CLIResponse<Result>.self, from: data).result
+private func decode<Result: Decodable>(_ data: Data?, as _: Result.Type) -> Result? {
+    guard let data else { return nil }
+    return try? JSONDecoder().decode(Response<Result>.self, from: data).result
+}
+
+private func runCLI<Result: Decodable>(_ tool: String, _ arguments: [String], as type: Result.Type) async -> Result? {
+    decode(await XPCHelperClient.shared.runAgentCLI(tool, arguments: arguments), as: type)
 }
 
 /// Collapses a free-form text to its first non-empty line.
@@ -35,7 +35,7 @@ private func firstLine(_ text: String?) -> String? {
 // MARK: - Herdr
 
 /// https://herdr.dev — terminal workspace manager for coding agents.
-struct HerdrSource: AgentSessionSource {
+enum HerdrSource {
     private struct Snapshot: Decodable {
         struct Workspace: Decodable {
             let workspace_id: String
@@ -60,10 +60,8 @@ struct HerdrSource: AgentSessionSource {
         let snapshot: Snapshot
     }
 
-    func fetchSessions() async -> [AgentSession] {
-        guard let snapshot = await runCLI("herdr", ["api", "snapshot"], as: SnapshotResult.self)?.snapshot else {
-            return []
-        }
+    static func sessions(from data: Data?) -> [AgentSession] {
+        guard let snapshot = decode(data, as: SnapshotResult.self)?.snapshot else { return [] }
         let workspaceLabels = Dictionary(
             snapshot.workspaces.map { ($0.workspace_id, $0.label) },
             uniquingKeysWith: { first, _ in first }
@@ -84,7 +82,7 @@ struct HerdrSource: AgentSessionSource {
         }
     }
 
-    func focus(_ session: AgentSession) async {
+    static func focus(_ session: AgentSession) async {
         _ = await XPCHelperClient.shared.runAgentCLI("herdr", arguments: ["agent", "focus", session.focusTarget])
     }
 
@@ -101,7 +99,7 @@ struct HerdrSource: AgentSessionSource {
 // MARK: - Orca
 
 /// https://github.com/stablyai/orca — desktop app for running agents in git worktrees.
-struct OrcaSource: AgentSessionSource {
+enum OrcaSource {
     private static let bundleIdentifier = "com.stablyai.orca"
 
     private struct WorktreeList: Decodable {
@@ -134,10 +132,8 @@ struct OrcaSource: AgentSessionSource {
         let terminals: [Terminal]
     }
 
-    func fetchSessions() async -> [AgentSession] {
-        guard let list = await runCLI("orca", ["worktree", "ps", "--json"], as: WorktreeList.self) else {
-            return []
-        }
+    static func sessions(from data: Data?) -> [AgentSession] {
+        guard let list = decode(data, as: WorktreeList.self) else { return [] }
 
         return list.worktrees.flatMap { worktree in
             let title = worktree.repo == worktree.displayName
@@ -159,7 +155,7 @@ struct OrcaSource: AgentSessionSource {
         }
     }
 
-    func focus(_ session: AgentSession) async {
+    static func focus(_ session: AgentSession) async {
         // Orca pane keys are "<tabId>:<leafId>"; terminal commands take a handle instead.
         if let terminals = await runCLI("orca", ["terminal", "list", "--json"], as: TerminalList.self),
            let terminal = terminals.terminals.first(where: { "\($0.tabId ?? ""):\($0.leafId ?? "")" == session.focusTarget })

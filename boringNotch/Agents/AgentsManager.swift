@@ -14,7 +14,7 @@ extension Defaults.Keys {
     static let agentAttentionAlerts = Key<Bool>("agentAttentionAlerts", default: true)
 }
 
-/// Polls the enabled agent sources and publishes a merged, priority-sorted list.
+/// Receives agent state pushed by the XPC helper and publishes a merged, priority-sorted list.
 @MainActor
 final class AgentsManager: ObservableObject {
     static let shared = AgentsManager()
@@ -23,12 +23,12 @@ final class AgentsManager: ObservableObject {
     /// The latest session that started waiting for the user or finished its work.
     @Published private(set) var attentionSession: AgentSession?
 
-    private let pollInterval: Duration = .seconds(2)
-    private var pollTask: Task<Void, Never>?
+    private var updatesTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     /// When each session entered its status, for sources that do not report it.
     private var statusDates: [String: (status: AgentStatus, date: Date)] = [:]
-    private var hasPolled = false
+    private var hasReceivedUpdate = false
+    private var latest: (herdr: Data?, orca: Data?) = (nil, nil)
 
     var needsInputCount: Int { sessions.filter { $0.status == .needsInput }.count }
     var workingCount: Int { sessions.filter { $0.status == .working }.count }
@@ -38,46 +38,63 @@ final class AgentsManager: ObservableObject {
         Defaults.publisher(.showAgents)
             .map(\.newValue)
             .removeDuplicates()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] enabled in
                 enabled ? self?.start() : self?.stop()
+            }
+            .store(in: &cancellables)
+
+        // Re-filter the last state when a source is toggled, without waiting for a change.
+        Defaults.publisher(keys: .showHerdrAgents, .showOrcaAgents, options: [])
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self else { return }
+                apply(herdr: latest.herdr, orca: latest.orca)
             }
             .store(in: &cancellables)
     }
 
     func focus(_ session: AgentSession) {
-        Task { await source(for: session.source).focus(session) }
+        Task {
+            switch session.source {
+            case .herdr: await HerdrSource.focus(session)
+            case .orca: await OrcaSource.focus(session)
+            }
+        }
     }
 
+    /// Waits for the helper to push changes; nothing runs while agent state is unchanged.
     private func start() {
-        guard pollTask == nil else { return }
-        pollTask = Task {
+        guard updatesTask == nil else { return }
+        updatesTask = Task {
+            var generation = -1
             while !Task.isCancelled {
-                await poll()
-                try? await Task.sleep(for: pollInterval)
+                guard let update = await XPCHelperClient.shared.waitForAgentUpdate(after: generation) else {
+                    // The helper was interrupted; reconnect and resynchronise.
+                    generation = -1
+                    try? await Task.sleep(for: .seconds(1))
+                    continue
+                }
+                guard !Task.isCancelled else { return }
+                generation = update.generation
+                apply(herdr: update.herdr, orca: update.orca)
             }
         }
     }
 
     private func stop() {
-        pollTask?.cancel()
-        pollTask = nil
+        updatesTask?.cancel()
+        updatesTask = nil
         sessions = []
         statusDates = [:]
-        hasPolled = false
+        hasReceivedUpdate = false
+        latest = (nil, nil)
     }
 
-    private func source(for source: AgentSource) -> any AgentSessionSource {
-        switch source {
-        case .herdr: HerdrSource()
-        case .orca: OrcaSource()
-        }
-    }
-
-    private func poll() async {
-        async let herdr = Defaults[.showHerdrAgents] ? HerdrSource().fetchSessions() : []
-        async let orca = Defaults[.showOrcaAgents] ? OrcaSource().fetchSessions() : []
-        let fetched = await herdr + orca
-        guard !Task.isCancelled else { return }
+    private func apply(herdr: Data?, orca: Data?) {
+        latest = (herdr, orca)
+        let fetched = (Defaults[.showHerdrAgents] ? HerdrSource.sessions(from: herdr) : [])
+            + (Defaults[.showOrcaAgents] ? OrcaSource.sessions(from: orca) : [])
 
         let now = Date()
         let previous = Dictionary(sessions.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
@@ -92,12 +109,12 @@ final class AgentsManager: ObservableObject {
         }
         .sorted { ($0.status, $1.since ?? now) < ($1.status, $0.since ?? now) }
 
-        if hasPolled, let alert = updated.first(where: { needsAttention($0, previous: previous[$0.id]) }) {
+        if hasReceivedUpdate, let alert = updated.first(where: { needsAttention($0, previous: previous[$0.id]) }) {
             raiseAttention(for: alert)
         }
 
         statusDates = dates
-        hasPolled = true
+        hasReceivedUpdate = true
         if updated != sessions {
             sessions = updated
         }

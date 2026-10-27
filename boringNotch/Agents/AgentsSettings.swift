@@ -30,7 +30,7 @@ struct AgentsSettings: View {
             } header: {
                 Text("Sources")
             } footer: {
-                Text("Agent states are read from the `herdr` and `orca` command line tools. Install them in /opt/homebrew/bin, /usr/local/bin or ~/.local/bin.")
+                Text("Agent states are pushed by Herdr and Orca as they change. Jumping to an agent requires the `herdr` and `orca` command line tools in /opt/homebrew/bin, /usr/local/bin or ~/.local/bin.")
                     .foregroundStyle(.secondary)
             }
         }

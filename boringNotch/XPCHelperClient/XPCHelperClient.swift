@@ -244,6 +244,22 @@ final class XPCHelperClient: NSObject {
 
     // MARK: - Coding Agents
 
+    /// Waits until the agent state differs from `generation`. Returns nil if the helper is unreachable.
+    nonisolated func waitForAgentUpdate(after generation: Int) async -> (generation: Int, herdr: Data?, orca: Data?)? {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.waitForAgentUpdate(after: generation) { generation, herdr, orca in
+                    continuation.resume(returning: (generation, herdr, orca))
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
+
     nonisolated func runAgentCLI(_ tool: String, arguments: [String]) async -> Data? {
         do {
             let service = await MainActor.run {
