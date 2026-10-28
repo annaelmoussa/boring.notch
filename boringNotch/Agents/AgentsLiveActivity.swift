@@ -23,7 +23,11 @@ struct AgentsLiveActivity: View {
     }
 
     private var count: Int {
-        status == .needsInput ? agents.needsInputCount : agents.workingCount
+        switch status {
+        case .needsInput: agents.needsInputCount
+        case .working: agents.workingCount
+        case .done, .idle: 0
+        }
     }
 
     var body: some View {
@@ -43,10 +47,10 @@ struct AgentsLiveActivity: View {
                         HStack(spacing: 6) {
                             Text(session.agent)
                                 .foregroundStyle(.white)
-                            Text(session.title)
+                            Text(session.approval ?? session.title)
                                 .foregroundStyle(.gray)
                             Spacer(minLength: vm.closedNotchSize.width)
-                            Text(session.status.label)
+                            Text(session.approval == nil ? session.status.label : "Allow?")
                                 .foregroundStyle(session.status.color)
                         }
                         .font(.system(size: 12, weight: .medium))

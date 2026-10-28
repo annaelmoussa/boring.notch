@@ -56,7 +56,7 @@ enum HerdrProvider: AgentProvider {
         return snapshot.agents.compactMap { agent in
             guard let kind = agent.display_agent ?? agent.agent else { return nil }
             return AgentSession(
-                id: "herdr:\(session ?? ""):\(agent.pane_id)",
+                id: AgentSession.id(provider: id, scope: session, target: agent.pane_id),
                 provider: id,
                 agent: kind,
                 title: agent.name ?? workspaceLabels[agent.workspace_id] ?? agent.pane_id,
@@ -78,10 +78,7 @@ enum HerdrProvider: AgentProvider {
         let reply = await XPCHelperClient.shared.agentRequest(id, payload: request ?? Data())
         let ancestors = reply.flatMap { try? JSONDecoder().decode([Int].self, from: $0) } ?? []
         await MainActor.run {
-            ancestors.lazy
-                .compactMap { NSRunningApplication(processIdentifier: pid_t($0)) }
-                .first { $0.activationPolicy == .regular }?
-                .activate()
+            hostApplication(among: ancestors)?.activate()
         }
     }
 

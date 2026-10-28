@@ -107,13 +107,16 @@ brew install --cask TheBoredTeam/boring-notch/boring-notch
 
 ## Coding agents
 
-The notch shows what your coding agents are doing, whichever tool runs them. [Herdr](https://herdr.dev) and [Orca](https://github.com/stablyai/orca) are supported today.
+The notch shows what your coding agents are doing, wherever they run: [Claude Code](https://claude.com/claude-code), [Codex](https://github.com/openai/codex), [OpenCode](https://opencode.ai) and [Pi](https://pi.dev) in any terminal, and agents managed by [Herdr](https://herdr.dev) or [Orca](https://github.com/stablyai/orca).
 
 - **Closed notch:** a status icon and a counter while agents are working or waiting for you.
-- **Alerts:** the notch widens when an agent needs input or finishes its work. Several alerts are shown one after another.
-- **Agents tab:** every agent, most urgent first, with its workspace, status and elapsed time. Click a row to jump to that agent and bring its window forward. Agents that have been done or idle for 30 minutes are hidden.
+- **Alerts:** the notch widens, with a sound, when an agent needs input or finishes its work. Several alerts are shown one after another.
+- **Permission requests:** allow or deny an agent's request straight from the notch. The agent still asks in its own window too, and whichever answer comes first wins.
+- **Agents tab:** every agent, most urgent first, with its project and branch, what it is doing or its last reply, and where it runs. Click a row to jump to it. Agents that have been done or idle for 30 minutes are hidden.
 
-Updates are event-driven and cost nothing while agents are idle. Sources and alerts can be turned on or off in **Settings → Agents**.
+Connect each agent once in **Settings → Agents → Integrations**. This adds a small hook to its configuration (or a plugin for OpenCode and Pi), leaving the rest untouched and keeping a backup of the original file. Everything stays on your Mac: hooks talk to the notch over a local socket and do nothing when the notch is not running. Codex asks you to trust new hooks once: run `/hooks` in Codex.
+
+Updates are event-driven and cost nothing while agents are idle.
 
 ### Adding a tool
 

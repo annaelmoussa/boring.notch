@@ -53,7 +53,7 @@ enum OrcaProvider: AgentProvider {
 
             return (worktree.agents ?? []).map { agent in
                 AgentSession(
-                    id: "orca:\(agent.paneKey)",
+                    id: AgentSession.id(provider: id, scope: nil, target: agent.paneKey),
                     provider: id,
                     agent: agent.agentType,
                     title: title,

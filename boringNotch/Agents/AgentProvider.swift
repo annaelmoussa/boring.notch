@@ -6,6 +6,7 @@
 //  with an `AgentMonitor` in the XPC helper, which reaches the tool outside the sandbox.
 //
 
+import AppKit
 import Foundation
 
 /// A tool that runs coding agents, such as a terminal workspace manager or an agent IDE.
@@ -21,10 +22,22 @@ protocol AgentProvider {
     static func sessions(from payload: Data) -> [AgentSession]
     /// Brings the agent to the front.
     static func focus(_ session: AgentSession) async
+    /// Answers a permission request shown in `AgentSession.approval`.
+    static func respond(to session: AgentSession, with decision: AgentDecision) async
+}
+
+extension AgentProvider {
+    static func respond(to session: AgentSession, with decision: AgentDecision) async {}
+}
+
+enum AgentDecision: String {
+    case allow, deny
+    /// Lets the agent ask in its own interface.
+    case `defer`
 }
 
 enum AgentProviders {
-    static let all: [any AgentProvider.Type] = [HerdrProvider.self, OrcaProvider.self]
+    static let all: [any AgentProvider.Type] = [HookProvider.self, HerdrProvider.self, OrcaProvider.self]
 
     static func provider(id: String) -> (any AgentProvider.Type)? {
         all.first { $0.id == id }
@@ -55,4 +68,11 @@ func firstAgentLine(_ text: String?) -> String? {
         .lazy
         .map { $0.trimmingCharacters(in: .whitespaces) }
         .first { !$0.isEmpty }
+}
+
+/// The first regular app among `pids`, typically the terminal hosting an agent's process tree.
+func hostApplication(among pids: [Int]) -> NSRunningApplication? {
+    pids.lazy
+        .compactMap { NSRunningApplication(processIdentifier: pid_t($0)) }
+        .first { $0.activationPolicy == .regular }
 }

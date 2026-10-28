@@ -8,6 +8,7 @@ import SwiftUI
 
 struct AgentsSettings: View {
     @Default(.disabledAgentProviders) private var disabledProviders
+    @State private var integrations: [String: HookProvider.IntegrationStatus] = [:]
 
     var body: some View {
         Form {
@@ -21,8 +22,37 @@ struct AgentsSettings: View {
                 Defaults.Toggle(key: .hideInactiveAgents) {
                     Text("Hide agents that have been done or idle for 30 minutes")
                 }
+                Defaults.Toggle(key: .agentSounds) {
+                    Text("Play a sound with alerts")
+                }
+                Defaults.Toggle(key: .agentApprovals) {
+                    Text("Answer permission requests from the notch")
+                }
             } header: {
                 Text("General")
+            } footer: {
+                Text("Codex waits for an answer before showing its own prompt, so its requests go back to Codex after 20 seconds or as soon as you switch to it.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                ForEach(HookProvider.integrations, id: \.id) { integration in
+                    IntegrationRow(name: integration.name, status: integrations[integration.id]) { install in
+                        Task {
+                            integrations = install
+                                ? await HookProvider.install(integration.id)
+                                : await HookProvider.uninstall(integration.id)
+                        }
+                    }
+                }
+            } header: {
+                Text("Integrations")
+            } footer: {
+                Text("Adds a small hook to each agent's configuration so it reports its activity directly, wherever it runs. Codex asks to trust new hooks once: run /hooks in Codex.")
+                    .foregroundStyle(.secondary)
+            }
+            .task {
+                integrations = await HookProvider.integrationStatus()
             }
 
             Section {
@@ -46,5 +76,30 @@ struct AgentsSettings: View {
                 if enabled { disabledProviders.remove(id) } else { disabledProviders.insert(id) }
             }
         )
+    }
+}
+
+private struct IntegrationRow: View {
+    let name: String
+    let status: HookProvider.IntegrationStatus?
+    let onChange: (_ install: Bool) -> Void
+
+    var body: some View {
+        HStack {
+            Text(name)
+            Spacer()
+            switch status {
+            case .none:
+                ProgressView().controlSize(.small)
+            case .some(let status) where !status.available:
+                Text("Not found").foregroundStyle(.secondary)
+            case .some(let status) where status.installed:
+                Label("Connected", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Button("Remove") { onChange(false) }
+            case .some:
+                Button("Connect") { onChange(true) }
+            }
+        }
     }
 }

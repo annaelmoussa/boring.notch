@@ -66,36 +66,39 @@ private struct AgentRow: View {
     let session: AgentSession
     let onSelect: () -> Void
 
+    @ObservedObject private var agents = AgentsManager.shared
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 10) {
-                Image(systemName: session.status.icon)
-                    .font(.system(size: 15))
-                    .foregroundStyle(session.status.color)
-                    .frame(width: 20)
+        HStack(spacing: 10) {
+            Image(systemName: session.status.icon)
+                .font(.system(size: 15))
+                .foregroundStyle(session.status.color)
+                .frame(width: 20)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(session.agent)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.white)
-                        Text(session.title)
-                            .foregroundStyle(.gray)
-                    }
-                    .font(.system(size: 13))
-
-                    if let detail = session.detail {
-                        Text(detail)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.gray.opacity(0.8))
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(session.agent)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                    Text(session.title)
+                        .foregroundStyle(.gray)
                 }
-                .lineLimit(1)
+                .font(.system(size: 13))
 
-                Spacer(minLength: 12)
+                if let detail = session.approval ?? session.detail {
+                    Text(detail)
+                        .font(.system(size: 11, design: session.approval == nil ? .default : .monospaced))
+                        .foregroundStyle(session.approval == nil ? .gray.opacity(0.8) : .white.opacity(0.85))
+                }
+            }
+            .lineLimit(1)
 
+            Spacer(minLength: 12)
+
+            if session.approval != nil {
+                approvalButtons
+            } else {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(session.status.label)
                         .font(.system(size: 11, weight: .medium))
@@ -111,16 +114,40 @@ private struct AgentRow: View {
                     .foregroundStyle(.gray)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isHovering ? Color.white.opacity(0.08) : .clear)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isHovering ? Color.white.opacity(0.08) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
+    }
+
+    private var approvalButtons: some View {
+        HStack(spacing: 6) {
+            Button("Deny") { agents.respond(to: session, with: .deny) }
+                .buttonStyle(ApprovalButtonStyle(fill: .white.opacity(0.1), foreground: .white))
+            Button("Allow") { agents.respond(to: session, with: .allow) }
+                .buttonStyle(ApprovalButtonStyle(fill: .orange, foreground: .black))
+        }
+    }
+}
+
+private struct ApprovalButtonStyle: ButtonStyle {
+    let fill: Color
+    let foreground: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(fill.opacity(configuration.isPressed ? 0.7 : 1)))
+            .contentShape(Capsule())
     }
 }
 

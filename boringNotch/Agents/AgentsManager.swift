@@ -3,6 +3,7 @@
 //  boringNotch
 //
 
+import AppKit
 import Combine
 import Defaults
 import Foundation
@@ -13,6 +14,9 @@ extension Defaults.Keys {
     static let disabledAgentProviders = Key<Set<String>>("disabledAgentProviders", default: [])
     static let agentAttentionAlerts = Key<Bool>("agentAttentionAlerts", default: true)
     static let hideInactiveAgents = Key<Bool>("hideInactiveAgents", default: true)
+    static let agentSounds = Key<Bool>("agentSounds", default: true)
+    /// Answer agents' permission requests from the notch instead of their own interface.
+    static let agentApprovals = Key<Bool>("agentApprovals", default: true)
 }
 
 /// Receives agent state pushed by the XPC helper and publishes a merged, priority-sorted list.
@@ -37,12 +41,20 @@ final class AgentsManager: ObservableObject {
     /// When each session entered its status, for sources that do not report it.
     private var statusDates: [String: (status: AgentStatus, date: Date)] = [:]
     private var hasReceivedUpdate = false
+    /// Sessions waiting for a permission answer at the last update.
+    private var pendingApprovalIDs: Set<String> = []
+    /// Sessions hidden because a richer session describes the same agent, by id.
+    private var containers: [String: AgentSession] = [:]
     /// Latest payload of each provider, keyed by provider id.
     private var latest: [String: Data] = [:]
 
     var needsInputCount: Int { sessions.filter { $0.status == .needsInput }.count }
     var workingCount: Int { sessions.filter { $0.status == .working }.count }
     var isActive: Bool { needsInputCount + workingCount > 0 }
+    var hasPendingApproval: Bool { sessions.contains { $0.approval != nil } }
+
+    private static let needsInputSound = NSSound(named: "Glass")
+    private static let doneSound = NSSound(named: "Tink")
 
     private init() {
         Defaults.publisher(.showAgents)
@@ -62,12 +74,28 @@ final class AgentsManager: ObservableObject {
                 apply(latest)
             }
             .store(in: &cancellables)
+
+        // An agent that waits for the notch gets its request back once the user switches to it.
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.releaseApprovals() }
+            .store(in: &cancellables)
     }
 
+    /// Jumps to the agent, through the workspace manager hosting it when there is one.
     func focus(_ session: AgentSession) {
+        let target = session.containerID.flatMap { containers[$0] } ?? session
+        guard let provider = AgentProviders.provider(id: target.provider) else { return }
+        Task {
+            await provider.focus(target)
+        }
+    }
+
+    func respond(to session: AgentSession, with decision: AgentDecision) {
         guard let provider = AgentProviders.provider(id: session.provider) else { return }
         Task {
-            await provider.focus(session)
+            await provider.respond(to: session, with: decision)
         }
     }
 
@@ -106,9 +134,32 @@ final class AgentsManager: ObservableObject {
     private func apply(_ payloads: [String: Data]) {
         latest = payloads
         let disabled = Defaults[.disabledAgentProviders]
-        let fetched = AgentProviders.all
+        let all = AgentProviders.all
             .filter { !disabled.contains($0.id) }
             .flatMap { provider in payloads[provider.id].map(provider.sessions(from:)) ?? [] }
+
+        // An agent reported both by its own hooks and by the workspace manager it runs in is shown once.
+        let containedIDs = Set(all.compactMap(\.containerID))
+        containers = Dictionary(all.filter { containedIDs.contains($0.id) }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Several sessions in one pane (a resumed conversation, say) are shown as the latest one.
+        var latestInContainer: [String: AgentSession] = [:]
+        for session in all where session.containerID != nil {
+            let current = latestInContainer[session.containerID!]
+            if current == nil || (session.since ?? .distantPast) > (current?.since ?? .distantPast) {
+                latestInContainer[session.containerID!] = session
+            }
+        }
+        let fetched = all.filter { session in
+            guard !containedIDs.contains(session.id) else { return false }
+            return session.containerID.map { latestInContainer[$0]?.id == session.id } ?? true
+        }
+        .map { session in
+            var session = session
+            if let container = session.containerID.flatMap({ containers[$0] }) {
+                session.location = container.providerName
+            }
+            return session
+        }
 
         let now = Date()
         var dates: [String: (status: AgentStatus, date: Date)] = [:]
@@ -122,16 +173,32 @@ final class AgentsManager: ObservableObject {
         }
 
         if hasReceivedUpdate {
-            let alerts = updated.filter { needsAttention($0, previous: statusDates[$0.id]?.status) }
+            let alerts = updated.filter {
+                needsAttention($0, previous: statusDates[$0.id]?.status) || ($0.approval != nil && !pendingApprovalIDs.contains($0.id))
+            }
             if !alerts.isEmpty { raiseAttention(for: alerts) }
         }
         statusDates = dates
+        pendingApprovalIDs = Set(updated.filter { $0.approval != nil }.map(\.id))
         hasReceivedUpdate = true
 
         let visible = visibleSessions(updated, now: now)
             .sorted { ($0.status, $1.since ?? now) < ($1.status, $0.since ?? now) }
         if visible != sessions {
             sessions = visible
+        }
+        releaseApprovals()
+    }
+
+    /// Hands permission requests back to the agent when the notch should not answer them:
+    /// approvals are turned off, or the agent waits on the notch while its window is in front.
+    private func releaseApprovals() {
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        for session in sessions where session.approval != nil {
+            let isWaitingInFront = session.approvalBlocksAgent && session.hostPID != nil && session.hostPID == frontmost
+            if !Defaults[.agentApprovals] || isWaitingInFront {
+                respond(to: session, with: .defer)
+            }
         }
     }
 
@@ -155,7 +222,7 @@ final class AgentsManager: ObservableObject {
 
     /// An agent needs attention when it starts waiting for input or finishes active work.
     private func needsAttention(_ session: AgentSession, previous: AgentStatus?) -> Bool {
-        guard let previous, previous != session.status else { return false }
+        guard previous != session.status else { return false }
         return session.status == .needsInput || (session.status == .done && previous == .working)
     }
 
@@ -175,6 +242,9 @@ final class AgentsManager: ObservableObject {
                 guard statusDates[alert.id]?.status == alert.status else { continue }
                 attentionSession = alert
                 BoringViewCoordinator.shared.toggleExpandingView(status: true, type: .agents)
+                if Defaults[.agentSounds] {
+                    (alert.status == .needsInput ? Self.needsInputSound : Self.doneSound)?.play()
+                }
                 try? await Task.sleep(for: Self.alertInterval)
             }
             if !Task.isCancelled { self?.alertTask = nil }

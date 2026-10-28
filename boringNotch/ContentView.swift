@@ -519,7 +519,7 @@ struct ContentView: View {
     }
 
     private func doOpen() {
-        if coordinator.expandingView.show && coordinator.expandingView.type == .agents {
+        if (coordinator.expandingView.show && coordinator.expandingView.type == .agents) || agentsManager.hasPendingApproval {
             coordinator.currentView = .agents
         }
         withAnimation(animationSpring) {

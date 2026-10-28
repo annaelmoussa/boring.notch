@@ -35,7 +35,7 @@ extension AgentMonitor {
 final class AgentEventMonitor {
     static let shared = AgentEventMonitor()
 
-    static let monitorTypes: [any AgentMonitor.Type] = [HerdrMonitor.self, OrcaMonitor.self]
+    static let monitorTypes: [any AgentMonitor.Type] = [HookMonitor.self, HerdrMonitor.self, OrcaMonitor.self]
 
     private let queue = DispatchQueue(label: "theboringteam.boringnotch.agents")
     private var monitors: [String: any AgentMonitor] = [:]

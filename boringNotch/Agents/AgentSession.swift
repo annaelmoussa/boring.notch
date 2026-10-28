@@ -62,8 +62,24 @@ struct AgentSession: Identifiable, Equatable {
     let focusTarget: String
     /// Namespace of `focusTarget` when the provider has several, e.g. a named terminal session.
     var scope: String? = nil
+    /// Where the agent runs, e.g. "Ghostty", shown instead of the provider name when known.
+    var location: String? = nil
+    /// The app hosting the agent, used to bring it forward.
+    var hostPID: pid_t? = nil
+    /// The same agent as reported by a workspace manager, e.g. a Herdr pane. It is hidden in favour
+    /// of this session, which knows more, and used to jump to the exact pane.
+    var containerID: String? = nil
+    /// What the agent asks permission for, while it waits for an answer that the notch can give.
+    var approval: String? = nil
+    /// The agent shows nothing until `approval` is answered, so it is handed back when its window is in front.
+    var approvalBlocksAgent = false
 
     var providerName: String {
-        AgentProviders.provider(id: provider)?.name ?? provider
+        location ?? AgentProviders.provider(id: provider)?.name ?? provider
+    }
+
+    /// The id a provider gives to the agent at `target`, shared so that sessions can refer to each other.
+    static func id(provider: String, scope: String?, target: String) -> String {
+        "\(provider):\(scope ?? ""):\(target)"
     }
 }
