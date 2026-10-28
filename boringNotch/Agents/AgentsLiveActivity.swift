@@ -52,14 +52,22 @@ struct AgentsLiveActivity: View {
                         }
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
-                        .transition(.opacity)
+                        // Shown once the notch has widened, and gone before it narrows, so it is never cut.
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(.easeIn(duration: 0.15).delay(0.2)),
+                            removal: .opacity.animation(.easeOut(duration: 0.08))
+                        ))
                     }
                 }
                 .frame(width: isExpanded ? 420 : vm.closedNotchSize.width - cornerRadiusInsets.closed.top)
+                // While the notch widens or narrows, the text must stay inside it.
+                .clipped()
 
             Text(count > 0 ? "\(count)" : "")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .monospacedDigit()
+                // The old and new counts would otherwise cross-fade as the notch changes size.
+                .contentTransition(.identity)
                 .foregroundStyle(status.color)
                 .frame(width: side, height: side)
         }

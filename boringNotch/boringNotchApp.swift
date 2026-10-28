@@ -280,6 +280,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Start following coding agents; views only observe a summary, which would not create it.
+        _ = AgentsManager.shared
 
         NotificationCenter.default.addObserver(
             self,

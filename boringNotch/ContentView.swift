@@ -83,6 +83,11 @@ struct ContentView: View {
         return chinWidth
     }
 
+    /// Whether the closed notch shows the music live activity.
+    private var musicIsOnDisplay: Bool {
+        (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
+    }
+
     /// Agent alerts take over the closed notch; ongoing agent activity yields to music.
     private var showAgentsActivity: Bool {
         guard vm.notchState == .closed, !vm.hideOnClosed, Defaults[.showAgents] else { return false }
@@ -519,8 +524,11 @@ struct ContentView: View {
     }
 
     private func doOpen() {
-        if (coordinator.expandingView.show && coordinator.expandingView.type == .agents) || agentsSummary.hasPendingApproval {
+        // The notch opens on what it was showing while closed: the agents when they were on display.
+        if showAgentsActivity || agentsSummary.hasPendingApproval {
             coordinator.currentView = .agents
+        } else if coordinator.currentView == .agents, musicIsOnDisplay {
+            coordinator.currentView = .home
         }
         withAnimation(animationSpring) {
             vm.open()
