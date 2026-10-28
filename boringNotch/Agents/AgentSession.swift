@@ -25,15 +25,6 @@ enum AgentStatus: Int, Comparable {
         }
     }
 
-    var icon: String {
-        switch self {
-        case .needsInput: "exclamationmark.bubble.fill"
-        case .working: "circle.dotted.circle"
-        case .done: "checkmark.circle.fill"
-        case .idle: "moon.zzz.fill"
-        }
-    }
-
     var color: Color {
         switch self {
         case .needsInput: .orange

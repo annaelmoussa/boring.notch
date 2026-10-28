@@ -143,9 +143,7 @@ private struct AgentRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: session.status.icon)
-                .font(.system(size: 15))
-                .foregroundStyle(session.status.color)
+            AgentStatusIcon(status: session.status)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {

@@ -34,10 +34,7 @@ struct AgentsLiveActivity: View {
         let side = max(0, vm.effectiveClosedNotchHeight - 12)
 
         HStack {
-            Image(systemName: status.icon)
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(status.color)
+            AgentStatusIcon(status: status, size: side * 0.8)
                 .frame(width: side, height: side)
 
             Rectangle()
