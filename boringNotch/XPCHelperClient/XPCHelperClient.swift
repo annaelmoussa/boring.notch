@@ -245,14 +245,29 @@ final class XPCHelperClient: NSObject {
     // MARK: - Coding Agents
 
     /// Waits until the agent state differs from `generation`. Returns nil if the helper is unreachable.
-    nonisolated func waitForAgentUpdate(after generation: Int) async -> (generation: Int, herdr: Data?, orca: Data?)? {
+    nonisolated func waitForAgentUpdate(after generation: Int) async -> (generation: Int, payloads: [String: Data])? {
         do {
             let service = await MainActor.run {
                 ensureRemoteService()
             }
             return try await service.withContinuation { service, continuation in
-                service.waitForAgentUpdate(after: generation) { generation, herdr, orca in
-                    continuation.resume(returning: (generation, herdr, orca))
+                service.waitForAgentUpdate(after: generation) { generation, payloads in
+                    continuation.resume(returning: (generation, payloads))
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated func agentRequest(_ provider: String, payload: Data) async -> Data? {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.agentRequest(provider, payload: payload) { data in
+                    continuation.resume(returning: data)
                 }
             }
         } catch {
@@ -272,21 +287,6 @@ final class XPCHelperClient: NSObject {
             }
         } catch {
             return nil
-        }
-    }
-
-    nonisolated func herdrClientAncestors(forSession session: String) async -> [Int] {
-        do {
-            let service = await MainActor.run {
-                ensureRemoteService()
-            }
-            return try await service.withContinuation { service, continuation in
-                service.herdrClientAncestors(forSession: session) { pids in
-                    continuation.resume(returning: pids)
-                }
-            }
-        } catch {
-            return []
         }
     }
 }

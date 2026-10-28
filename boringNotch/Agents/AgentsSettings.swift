@@ -7,6 +7,8 @@ import Defaults
 import SwiftUI
 
 struct AgentsSettings: View {
+    @Default(.disabledAgentProviders) private var disabledProviders
+
     var body: some View {
         Form {
             Section {
@@ -24,19 +26,25 @@ struct AgentsSettings: View {
             }
 
             Section {
-                Defaults.Toggle(key: .showHerdrAgents) {
-                    Text("Herdr")
-                }
-                Defaults.Toggle(key: .showOrcaAgents) {
-                    Text("Orca")
+                ForEach(AgentProviders.all.map { ($0.id, $0.name) }, id: \.0) { id, name in
+                    Toggle(name, isOn: enabledBinding(for: id))
                 }
             } header: {
                 Text("Sources")
             } footer: {
-                Text("Agent states are pushed by Herdr and Orca as they change. Named Herdr sessions are followed too. Jumping to an agent requires the `herdr` and `orca` command line tools in /opt/homebrew/bin, /usr/local/bin or ~/.local/bin.")
+                Text("Each source pushes agent states as they change, so nothing runs while agents are idle.")
                     .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Agents")
+    }
+
+    private func enabledBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { !disabledProviders.contains(id) },
+            set: { enabled in
+                if enabled { disabledProviders.remove(id) } else { disabledProviders.insert(id) }
+            }
+        )
     }
 }

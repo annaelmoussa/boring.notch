@@ -9,8 +9,8 @@ import Foundation
 
 extension Defaults.Keys {
     static let showAgents = Key<Bool>("showAgents", default: true)
-    static let showHerdrAgents = Key<Bool>("showHerdrAgents", default: true)
-    static let showOrcaAgents = Key<Bool>("showOrcaAgents", default: true)
+    /// Ids of the providers turned off in Settings.
+    static let disabledAgentProviders = Key<Set<String>>("disabledAgentProviders", default: [])
     static let agentAttentionAlerts = Key<Bool>("agentAttentionAlerts", default: true)
     static let hideInactiveAgents = Key<Bool>("hideInactiveAgents", default: true)
 }
@@ -37,7 +37,8 @@ final class AgentsManager: ObservableObject {
     /// When each session entered its status, for sources that do not report it.
     private var statusDates: [String: (status: AgentStatus, date: Date)] = [:]
     private var hasReceivedUpdate = false
-    private var latest: (herdr: Data?, orca: Data?) = (nil, nil)
+    /// Latest payload of each provider, keyed by provider id.
+    private var latest: [String: Data] = [:]
 
     var needsInputCount: Int { sessions.filter { $0.status == .needsInput }.count }
     var workingCount: Int { sessions.filter { $0.status == .working }.count }
@@ -53,22 +54,20 @@ final class AgentsManager: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Re-filter the last state when a source is toggled, without waiting for a change.
-        Defaults.publisher(keys: .showHerdrAgents, .showOrcaAgents, .hideInactiveAgents, options: [])
+        // Re-filter the last state when a provider is toggled, without waiting for a change.
+        Defaults.publisher(keys: .disabledAgentProviders, .hideInactiveAgents, options: [])
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
                 guard let self else { return }
-                apply(herdr: latest.herdr, orca: latest.orca)
+                apply(latest)
             }
             .store(in: &cancellables)
     }
 
     func focus(_ session: AgentSession) {
+        guard let provider = AgentProviders.provider(id: session.provider) else { return }
         Task {
-            switch session.source {
-            case .herdr: await HerdrSource.focus(session)
-            case .orca: await OrcaSource.focus(session)
-            }
+            await provider.focus(session)
         }
     }
 
@@ -86,7 +85,7 @@ final class AgentsManager: ObservableObject {
                 }
                 guard !Task.isCancelled else { return }
                 generation = update.generation
-                apply(herdr: update.herdr, orca: update.orca)
+                apply(update.payloads)
             }
         }
     }
@@ -101,13 +100,15 @@ final class AgentsManager: ObservableObject {
         sessions = []
         statusDates = [:]
         hasReceivedUpdate = false
-        latest = (nil, nil)
+        latest = [:]
     }
 
-    private func apply(herdr: Data?, orca: Data?) {
-        latest = (herdr, orca)
-        let fetched = (Defaults[.showHerdrAgents] ? HerdrSource.sessions(from: herdr) : [])
-            + (Defaults[.showOrcaAgents] ? OrcaSource.sessions(from: orca) : [])
+    private func apply(_ payloads: [String: Data]) {
+        latest = payloads
+        let disabled = Defaults[.disabledAgentProviders]
+        let fetched = AgentProviders.all
+            .filter { !disabled.contains($0.id) }
+            .flatMap { provider in payloads[provider.id].map(provider.sessions(from:)) ?? [] }
 
         let now = Date()
         var dates: [String: (status: AgentStatus, date: Date)] = [:]
@@ -147,7 +148,7 @@ final class AgentsManager: ObservableObject {
         expiryTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(max(1, nextExpiry.timeIntervalSinceNow)))
             guard let self, !Task.isCancelled else { return }
-            apply(herdr: latest.herdr, orca: latest.orca)
+            apply(latest)
         }
         return visible
     }

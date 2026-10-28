@@ -141,19 +141,17 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
 
     // MARK: - Coding agents
 
-    /// Long-poll: replies with the Herdr snapshot and Orca worktrees once they differ from `generation`.
-    @objc func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, Data?, Data?) -> Void) {
+    /// Long-poll: replies with every agent monitor's payload, keyed by provider id, once it differs from `generation`.
+    @objc func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, [String: Data]) -> Void) {
         AgentEventMonitor.shared.waitForUpdate(after: generation, reply: reply)
     }
 
-    /// Replies with the ancestors of the Herdr client attached to `session` ("" for the default session).
-    @objc func herdrClientAncestors(forSession session: String, with reply: @escaping ([Int]) -> Void) {
-        DispatchQueue.global().async {
-            reply(HerdrClientLocator.ancestors(ofClientFor: session))
-        }
+    /// Forwards a provider-specific request to the matching agent monitor.
+    @objc func agentRequest(_ provider: String, payload: Data, with reply: @escaping (Data?) -> Void) {
+        AgentEventMonitor.shared.handle(payload, for: provider, reply: reply)
     }
 
-    private static let agentCLIs: Set<String> = ["herdr", "orca"]
+    private static let agentCLIs = Set(AgentEventMonitor.monitorTypes.flatMap { $0.tools })
     private static let agentCLISearchPaths = [
         "/opt/homebrew/bin",
         "/usr/local/bin",

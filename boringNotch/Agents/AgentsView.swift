@@ -13,8 +13,7 @@ struct AgentsView: View {
 
     var body: some View {
         if agents.sessions.isEmpty {
-            EmptyStateView(message: emptyMessage)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            AgentsEmptyState()
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
@@ -29,15 +28,37 @@ struct AgentsView: View {
             }
         }
     }
+}
 
-    private var emptyMessage: String {
-        let sources = [
-            Defaults[.showHerdrAgents] ? AgentSource.herdr.rawValue : nil,
-            Defaults[.showOrcaAgents] ? AgentSource.orca.rawValue : nil,
-        ].compactMap { $0 }
-        return sources.isEmpty
-            ? "Enable an agent source in Settings"
-            : "No recent agents in \(sources.joined(separator: " or "))"
+private struct AgentsEmptyState: View {
+    @Default(.disabledAgentProviders) private var disabledProviders
+
+    private var allProvidersDisabled: Bool {
+        AgentProviders.all.allSatisfy { disabledProviders.contains($0.id) }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: 42, height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.white.opacity(0.06))
+                        .strokeBorder(.white.opacity(0.08))
+                )
+
+            VStack(spacing: 3) {
+                Text(allProvidersDisabled ? "Agent sources are off" : "No active agents")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(allProvidersDisabled ? "Turn one on in Settings → Agents" : "Agents show up here as soon as they start working")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.gray)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -80,7 +101,7 @@ private struct AgentRow: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(session.status.color)
                     HStack(spacing: 4) {
-                        Text(session.source.rawValue)
+                        Text(session.providerName)
                         if let since = session.since {
                             Text("·")
                             ElapsedText(since: since)

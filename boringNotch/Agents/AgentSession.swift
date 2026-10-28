@@ -44,15 +44,11 @@ enum AgentStatus: Int, Comparable {
     }
 }
 
-enum AgentSource: String {
-    case herdr = "Herdr"
-    case orca = "Orca"
-}
-
-/// A coding agent reported by one of the supported workspace managers.
+/// A coding agent reported by an `AgentProvider`.
 struct AgentSession: Identifiable, Equatable {
     let id: String
-    let source: AgentSource
+    /// Id of the provider that reported the agent.
+    let provider: String
     /// Agent kind as reported by the source, e.g. "codex".
     let agent: String
     /// Workspace or worktree the agent runs in.
@@ -64,6 +60,10 @@ struct AgentSession: Identifiable, Equatable {
     var since: Date?
     /// Source-specific identifier used to bring the agent to the front.
     let focusTarget: String
-    /// Namespace of `focusTarget` when the source has several, e.g. a named Herdr session.
+    /// Namespace of `focusTarget` when the provider has several, e.g. a named terminal session.
     var scope: String? = nil
+
+    var providerName: String {
+        AgentProviders.provider(id: provider)?.name ?? provider
+    }
 }

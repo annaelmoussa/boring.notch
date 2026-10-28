@@ -107,14 +107,22 @@ brew install --cask TheBoredTeam/boring-notch/boring-notch
 
 ## Coding agents
 
-The notch shows what your coding agents are doing in [Herdr](https://herdr.dev) and [Orca](https://github.com/stablyai/orca).
+The notch shows what your coding agents are doing, whichever tool runs them. [Herdr](https://herdr.dev) and [Orca](https://github.com/stablyai/orca) are supported today.
 
 - **Closed notch:** a status icon and a counter while agents are working or waiting for you.
-- **Alerts:** the notch widens when an agent needs input or finishes its work.
+- **Alerts:** the notch widens when an agent needs input or finishes its work. Several alerts are shown one after another.
 - **Agents tab:** every agent, most urgent first, with its workspace, status and elapsed time. Click a row to jump to that agent and bring its window forward. Agents that have been done or idle for 30 minutes are hidden.
-- **Several alerts at once** are shown one after another.
 
-Updates are event-driven and cost nothing while agents are idle: Herdr pushes events over its local socket (the default session and named sessions alike), and Orca's agent status file is watched with kqueue, each change triggering a single request to Orca's local runtime. Jumping to an agent uses the `herdr` and `orca` command line tools, looked up in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. Sources and alerts can be turned on or off in **Settings → Agents**.
+Updates are event-driven and cost nothing while agents are idle. Sources and alerts can be turned on or off in **Settings → Agents**.
+
+### Adding a tool
+
+Each tool is a pair of small, self-contained files:
+
+1. **`BoringNotchXPCHelper/Monitors/`:** an `AgentMonitor` that watches the tool outside the app sandbox and publishes a payload whenever its agents change. Register it in `AgentEventMonitor.monitorTypes`.
+2. **`boringNotch/Agents/Providers/`:** an `AgentProvider` with the same `id` that turns that payload into agent sessions and brings an agent to the front. Register it in `AgentProviders.all`.
+
+Nothing else in the app refers to a specific tool.
 
 ## 📋 Roadmap
 - [x] Playback live activity 🎧

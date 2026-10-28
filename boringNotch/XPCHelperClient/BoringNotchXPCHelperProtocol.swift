@@ -20,9 +20,9 @@ import Foundation
     func isScreenBrightnessAvailable(with reply: @escaping (Bool) -> Void)
     func currentScreenBrightness(with reply: @escaping (NSNumber?) -> Void)
     func setScreenBrightness(_ value: Float, with reply: @escaping (Bool) -> Void)
-    // Coding agents (Herdr, Orca), reached outside the app sandbox
-    func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, Data?, Data?) -> Void)
+    // Coding agents, reached outside the app sandbox
+    func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, [String: Data]) -> Void)
+    func agentRequest(_ provider: String, payload: Data, with reply: @escaping (Data?) -> Void)
     func runAgentCLI(_ tool: String, arguments: [String], with reply: @escaping (Data?) -> Void)
-    func herdrClientAncestors(forSession session: String, with reply: @escaping ([Int]) -> Void)
 }
 
