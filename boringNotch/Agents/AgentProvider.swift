@@ -24,10 +24,16 @@ protocol AgentProvider {
     static func focus(_ session: AgentSession) async
     /// Answers a permission request shown in `AgentSession.approval`.
     static func respond(to session: AgentSession, with decision: AgentDecision) async
+    /// Types `text` into the agent's terminal and submits it. Returns false when that is not possible.
+    static func reply(to session: AgentSession, text: String) async -> Bool
 }
 
 extension AgentProvider {
     static func respond(to session: AgentSession, with decision: AgentDecision) async {}
+
+    static func reply(to session: AgentSession, text: String) async -> Bool {
+        false
+    }
 }
 
 enum AgentDecision: String {

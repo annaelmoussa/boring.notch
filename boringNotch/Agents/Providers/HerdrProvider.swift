@@ -64,15 +64,15 @@ enum HerdrProvider: AgentProvider {
                 status: Self.status(agent.agent_status),
                 since: nil,
                 focusTarget: agent.pane_id,
-                scope: session
+                scope: session,
+                canReply: true
             )
         }
     }
 
     /// Focuses the pane in Herdr, then brings the terminal running that Herdr session forward.
     static func focus(_ session: AgentSession) async {
-        let sessionArguments = session.scope.map { ["--session", $0] } ?? []
-        _ = await XPCHelperClient.shared.runAgentCLI("herdr", arguments: sessionArguments + ["agent", "focus", session.focusTarget])
+        _ = await XPCHelperClient.shared.runAgentCLI("herdr", arguments: sessionArguments(session) + ["agent", "focus", session.focusTarget])
 
         let request = try? JSONEncoder().encode(["terminalFor": session.scope ?? ""])
         let reply = await XPCHelperClient.shared.agentRequest(id, payload: request ?? Data())
@@ -80,6 +80,14 @@ enum HerdrProvider: AgentProvider {
         await MainActor.run {
             hostApplication(among: ancestors)?.activate()
         }
+    }
+
+    static func reply(to session: AgentSession, text: String) async -> Bool {
+        await XPCHelperClient.shared.runAgentCLI("herdr", arguments: sessionArguments(session) + ["pane", "run", session.focusTarget, text]) != nil
+    }
+
+    private static func sessionArguments(_ session: AgentSession) -> [String] {
+        session.scope.map { ["--session", $0] } ?? []
     }
 
     private static func status(_ raw: String) -> AgentStatus {

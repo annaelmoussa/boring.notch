@@ -181,19 +181,11 @@ private final class HerdrSessionMonitor {
 private enum HerdrClientLocator {
     /// Ancestors of every client attached to `session` ("" for the default session), nearest first.
     static func ancestors(ofClientFor session: String) -> [Int] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,ppid=,args="]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return [] }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        guard let output = Command.run("/bin/ps", ["-axo", "pid=,ppid=,args="]) else { return [] }
 
         var parents: [Int: Int] = [:]
         var clients: [Int] = []
-        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             let fields = line.split(separator: " ", maxSplits: 2)
             guard fields.count == 3, let pid = Int(fields[0]), let parent = Int(fields[1]) else { continue }
             parents[pid] = parent

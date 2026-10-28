@@ -8,7 +8,7 @@ import SwiftUI
 
 struct AgentsSettings: View {
     @Default(.disabledAgentProviders) private var disabledProviders
-    @State private var integrations: [String: HookProvider.IntegrationStatus] = [:]
+    @State private var integrations: [HookProvider.Integration] = []
 
     var body: some View {
         Form {
@@ -28,31 +28,34 @@ struct AgentsSettings: View {
                 Defaults.Toggle(key: .agentApprovals) {
                     Text("Answer permission requests from the notch")
                 }
+                Defaults.Toggle(key: .showClaudeUsage) {
+                    Text("Show Claude plan usage")
+                }
             } header: {
                 Text("General")
             } footer: {
-                Text("Codex waits for an answer before showing its own prompt, so its requests go back to Codex after 20 seconds or as soon as you switch to it.")
+                Text("Agents other than Claude Code and OpenCode wait for an answer before showing their own prompt, so their requests go back to them after 20 seconds or as soon as you switch to them. Plan usage is relayed by Claude Code's status line while a session runs; your own status line keeps showing.")
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                ForEach(HookProvider.integrations, id: \.id) { integration in
-                    IntegrationRow(name: integration.name, status: integrations[integration.id]) { install in
+                ForEach(integrations.filter(\.available)) { integration in
+                    IntegrationRow(integration: integration) { install in
                         Task {
                             integrations = install
-                                ? await HookProvider.install(integration.id)
-                                : await HookProvider.uninstall(integration.id)
+                                ? await HookProvider.install(integration)
+                                : await HookProvider.uninstall(integration)
                         }
                     }
                 }
             } header: {
                 Text("Integrations")
             } footer: {
-                Text("Adds a small hook to each agent's configuration so it reports its activity directly, wherever it runs. Codex asks to trust new hooks once: run /hooks in Codex.")
+                Text(integrationsFooter)
                     .foregroundStyle(.secondary)
             }
             .task {
-                integrations = await HookProvider.integrationStatus()
+                integrations = await HookProvider.integrations()
             }
 
             Section {
@@ -69,6 +72,12 @@ struct AgentsSettings: View {
         .navigationTitle("Agents")
     }
 
+    private var integrationsFooter: String {
+        let others = integrations.filter { !$0.available }.map(\.name)
+        let base = "Connecting adds a small hook to the agent's configuration, so it reports its activity wherever it runs. The rest of the file is left untouched and backed up first."
+        return others.isEmpty ? base : base + " Also supported once installed: " + ListFormatter.localizedString(byJoining: others) + "."
+    }
+
     private func enabledBinding(for id: String) -> Binding<Bool> {
         Binding(
             get: { !disabledProviders.contains(id) },
@@ -80,24 +89,25 @@ struct AgentsSettings: View {
 }
 
 private struct IntegrationRow: View {
-    let name: String
-    let status: HookProvider.IntegrationStatus?
+    let integration: HookProvider.Integration
     let onChange: (_ install: Bool) -> Void
 
     var body: some View {
         HStack {
-            Text(name)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(integration.name)
+                if let note = integration.note, integration.installed {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Spacer()
-            switch status {
-            case .none:
-                ProgressView().controlSize(.small)
-            case .some(let status) where !status.available:
-                Text("Not found").foregroundStyle(.secondary)
-            case .some(let status) where status.installed:
+            if integration.installed {
                 Label("Connected", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                 Button("Remove") { onChange(false) }
-            case .some:
+            } else {
                 Button("Connect") { onChange(true) }
             }
         }

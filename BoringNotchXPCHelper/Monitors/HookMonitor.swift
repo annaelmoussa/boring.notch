@@ -2,9 +2,9 @@
 //  HookMonitor.swift
 //  BoringNotchXPCHelper
 //
-//  Agents that run on their own (Claude Code, Codex, OpenCode, Pi) report their lifecycle
-//  through hooks or plugins installed by `AgentIntegrations`. Each event arrives as one
-//  connection on a Unix socket, so nothing runs between events.
+//  Agents that run on their own (Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Pi…) report
+//  their lifecycle through hooks or plugins installed by `AgentIntegrations`. Each event arrives
+//  as one connection on a Unix socket, so nothing runs between events.
 //
 
 import Foundation
@@ -13,10 +13,11 @@ import Foundation
 ///
 /// Wire format, one connection per event:
 /// ```
-/// <agent>\t<pid>\t<TERM_PROGRAM>\t<HERDR_PANE_ID>\t<HERDR_SOCKET_PATH>\t<ORCA_PANE_KEY>\n
-/// <event JSON, using Claude Code hook field names>\n
+/// <agent>\t<pid>\t<event name>\t<TERM_PROGRAM>\t<HERDR_PANE_ID>\t<HERDR_SOCKET_PATH>\t<ORCA_PANE_KEY>\t<TMUX_PANE>\t<TMUX>\n
+/// <event JSON>\n
 /// ```
-/// A `PermissionRequest` connection stays open until a decision line is written back.
+/// Agents name events and fields differently; `HookEvent` maps them onto Claude Code's.
+/// A permission request connection stays open until a decision line is written back.
 final class HookMonitor: AgentMonitor {
     static let id = "hooks"
     static let tools: [String] = []
@@ -28,12 +29,11 @@ final class HookMonitor: AgentMonitor {
         let id: String
         let agent: String
         let pid: pid_t
-        var ancestors: [Int]
-        var terminal: String?
-        var container: [String: String]?
-        var cwd: String
-        var project: String
-        var branch: String?
+        let ancestors: [Int]
+        let terminal: TerminalLocation
+        let container: [String: String]?
+        let project: String
+        let branch: String?
         var status = "idle"
         var detail: String?
         var since = Date()
@@ -43,22 +43,23 @@ final class HookMonitor: AgentMonitor {
 
         var json: [String: Any] {
             var json: [String: Any] = [
-                "id": id, "agent": agent, "pid": Int(pid), "ancestors": ancestors,
+                "id": id, "agent": agent, "ancestors": ancestors,
                 "project": project, "status": status, "since": since.timeIntervalSince1970 * 1000,
+                "canReply": terminal.canSendText, "approvalBlocksAgent": approvalBlocksAgent,
             ]
-            json["terminal"] = terminal
+            json["terminal"] = terminal.program
             json["container"] = container
             json["branch"] = branch
             json["detail"] = detail
             json["approval"] = approval
-            json["approvalBlocksAgent"] = approvalBlocksAgent
             return json
         }
     }
 
-    /// Agents that wait for permission hooks before showing their own prompt, and how long
-    /// the notch may hold a request before handing it back to them.
-    private static let blockingAgents: [String: TimeInterval] = ["codex": 20]
+    /// Agents known to keep their own permission prompt on screen while a hook waits; any other
+    /// agent gets its request back after this long, so it is never stuck on the notch.
+    private static let promptingAgents: Set<String> = ["claude", "opencode"]
+    private static let approvalGrace: TimeInterval = 20
 
     private let queue: DispatchQueue
     private let onChange: (Data?) -> Void
@@ -66,9 +67,11 @@ final class HookMonitor: AgentMonitor {
     /// Connections still sending their event.
     private var connections: [ObjectIdentifier: LineSocket] = [:]
     private var sessions: [String: Session] = [:]
-    /// Open `PermissionRequest` connections, keyed by session id.
+    /// Open permission request connections, keyed by session id.
     private var pendingApprovals: [String: LineSocket] = [:]
     private var exitWatchers: [pid_t: DispatchSourceProcess] = [:]
+    /// The `rate_limits` object of Claude Code's latest status line update.
+    private var rateLimits: [String: Any] = [:]
 
     init(queue: DispatchQueue, onChange: @escaping (Data?) -> Void) {
         self.queue = queue
@@ -82,7 +85,10 @@ final class HookMonitor: AgentMonitor {
 
     /// Requests from the app:
     /// - `{"decide": <session id>, "behavior": "allow" | "deny" | "defer"}`
-    /// - `{"integrations": "status"}`, `{"install": <agent>}`, `{"uninstall": <agent>}`
+    /// - `{"focus": <session id>}`, `{"reply": <session id>, "text": …}`: replies `true` when handled
+    /// - `{"integrations": "status"}`, `{"install": <name>}`, `{"uninstall": <name>}`
+    /// - `{"usage": "claude"}`: the latest plan usage relayed by Claude Code's status line
+    /// - `{"usageRelay": "on" | "off"}`
     func handle(_ request: Data, reply: @escaping (Data?) -> Void) {
         guard let object = try? JSONSerialization.jsonObject(with: request) as? [String: String] else { return reply(nil) }
 
@@ -90,14 +96,33 @@ final class HookMonitor: AgentMonitor {
             decide(id, behavior: behavior)
             return reply(Data())
         }
-        if let agent = object["install"] {
-            AgentIntegrations.install(agent)
-        } else if let agent = object["uninstall"] {
-            AgentIntegrations.uninstall(agent)
+        if let id = object["focus"] {
+            let terminal = sessions[id]?.terminal
+            return DispatchQueue.global().async { reply(Self.encode(terminal?.focus() == true)) }
+        }
+        if let id = object["reply"], let text = object["text"] {
+            let terminal = sessions[id]?.terminal
+            return DispatchQueue.global().async { reply(Self.encode(terminal?.send(text) == true)) }
+        }
+        if object["usage"] == "claude" {
+            return reply(currentUsage())
+        }
+        if let state = object["usageRelay"] {
+            AgentIntegrations.setStatusLineRelay(state == "on")
+            return reply(Data())
+        }
+        if let name = object["install"] {
+            AgentIntegrations.install(name)
+        } else if let name = object["uninstall"] {
+            AgentIntegrations.uninstall(name)
         } else if object["integrations"] == nil {
             return reply(nil)
         }
         reply(try? JSONSerialization.data(withJSONObject: AgentIntegrations.status()))
+    }
+
+    private static func encode(_ value: Bool) -> Data {
+        Data((value ? "true" : "false").utf8)
     }
 
     // MARK: - Events
@@ -114,8 +139,10 @@ final class HookMonitor: AgentMonitor {
             }
             socket.onLine = nil
             connections[key] = nil
-            guard let event = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return socket.close() }
-            handle(event, header: header, socket: socket)
+            guard let payload = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let event = HookEvent(header: header, payload: payload)
+            else { return socket.close() }
+            handle(event, socket: socket)
         }
         socket.onClose = { [weak self] in self?.drop(key) }
         queue.asyncAfter(deadline: .now() + 5) { [weak self] in self?.drop(key) }
@@ -126,46 +153,45 @@ final class HookMonitor: AgentMonitor {
         connections.removeValue(forKey: key)?.close()
     }
 
-    private func handle(_ event: [String: Any], header: [String], socket: LineSocket) {
-        let field = { (index: Int) in header.indices.contains(index) && !header[index].isEmpty ? header[index] : nil }
-        guard let agent = field(0), let rawPID = field(1).flatMap(Int32.init),
-              let sessionID = event["session_id"] as? String,
-              let name = event["hook_event_name"] as? String
-        else { return socket.close() }
+    private func handle(_ event: HookEvent, socket: LineSocket) {
+        if event.name == "StatusLine" {
+            socket.close()
+            if let limits = event.rateLimits { rateLimits = limits }
+            return
+        }
+        guard let agentPID = agentProcess(for: event) else { return socket.close() }
+        let id = "\(event.agent):\(event.sessionID ?? "pid-\(agentPID)")"
 
-        let id = "\(agent):\(sessionID)"
-        if name == "SessionEnd" {
+        if event.name == "SessionEnd" {
             socket.close()
             end(id)
             return publish()
         }
 
-        guard var session = sessions[id] ?? makeSession(id: id, agent: agent, pid: rawPID, header: field, event: event) else {
-            return socket.close()
-        }
+        var session = sessions[id] ?? makeSession(id: id, event: event, pid: agentPID)
         var holdsConnection = false
         let previousStatus = session.status
 
-        switch name {
+        switch event.name {
         case "SessionStart":
             session.status = "idle"
         case "UserPromptSubmit":
             session.status = "working"
-            session.detail = Self.firstLine(event["prompt"] as? String) ?? session.detail
+            session.detail = Self.firstLine(event.prompt) ?? session.detail
         case "PreToolUse", "PostToolUse":
             session.status = "working"
-            session.detail = Self.summary(tool: event["tool_name"] as? String, input: event["tool_input"], preferDescription: true)
+            session.detail = Self.summary(tool: event.tool, input: event.toolInput, preferDescription: true) ?? session.detail
         case "PermissionRequest":
             session.status = "needsInput"
-            let summary = Self.summary(tool: event["tool_name"] as? String, input: event["tool_input"], preferDescription: false) ?? "Permission requested"
+            let summary = Self.summary(tool: event.tool, input: event.toolInput, preferDescription: false) ?? "Permission requested"
             session.detail = summary
             session.approval = summary
             resolveApproval(for: id, behavior: "defer")
             pendingApprovals[id] = socket
             holdsConnection = true
-            if let grace = Self.blockingAgents[agent] {
+            if !Self.promptingAgents.contains(event.agent) {
                 session.approvalBlocksAgent = true
-                queue.asyncAfter(deadline: .now() + grace) { [weak self, weak socket] in
+                queue.asyncAfter(deadline: .now() + Self.approvalGrace) { [weak self, weak socket] in
                     guard let self, let socket, pendingApprovals[id] === socket else { return }
                     decide(id, behavior: "defer")
                 }
@@ -181,20 +207,21 @@ final class HookMonitor: AgentMonitor {
         case "PermissionReplied":
             session.status = "working"
         case "Notification":
-            let type = event["notification_type"] as? String
-            if ["permission_prompt", "elicitation_dialog", "agent_needs_input"].contains(type ?? ""), session.approval == nil {
+            if event.needsInput, session.approval == nil {
                 session.status = "needsInput"
-                session.detail = Self.firstLine(event["message"] as? String) ?? session.detail
+                session.detail = Self.firstLine(event.message) ?? session.detail
             }
-        case "Stop", "StopFailure":
+        case "AgentResponse":
+            session.detail = Self.firstLine(Self.plainText(event.reply)) ?? session.detail
+        case "Stop":
             session.status = "done"
-            session.detail = Self.firstLine(Self.plainText(event["last_assistant_message"] as? String)) ?? session.detail
+            session.detail = Self.firstLine(Self.plainText(event.reply)) ?? session.detail
         default:
             break
         }
 
         // Any later event means a pending request was answered elsewhere.
-        if name != "PermissionRequest", name != "Notification", session.approval != nil {
+        if !["PermissionRequest", "Notification"].contains(event.name), session.approval != nil {
             resolveApproval(for: id, behavior: "defer")
             session.approval = nil
             session.approvalBlocksAgent = false
@@ -205,42 +232,49 @@ final class HookMonitor: AgentMonitor {
         publish()
     }
 
-    private func makeSession(id: String, agent: String, pid rawPID: pid_t, header field: (Int) -> String?, event: [String: Any]) -> Session? {
-        // Hooks run through a shell; the agent is the first ancestor that is not one.
-        var pid = rawPID
+    /// The agent's process: hooks usually run through a shell, so it is the first ancestor that is not one.
+    /// Returns nil for events that must be ignored.
+    private func agentProcess(for event: HookEvent) -> pid_t? {
+        var pid = event.pid
         while let info = ProcessInfoReader.info(pid), Self.shells.contains(info.name), info.parent > 1 {
             pid = info.parent
         }
         // Late events from an agent that already exited would leave a session nothing removes.
         guard let name = ProcessInfoReader.info(pid)?.name else { return nil }
-        // Some OpenCode plugins replay Claude Code hooks; that agent already reports itself.
-        if AgentIntegrations.agents.contains(name), name != agent {
+        // Some plugins replay Claude Code hooks from another agent, which already reports itself.
+        if event.agent == "claude", name != "claude", AgentIntegrations.all.contains(where: { $0.id == name }) {
             return nil
         }
-        watchExit(of: pid)
-
-        var container: [String: String]?
-        if let pane = field(3) {
-            // Named sessions live in ~/.config/herdr/sessions/<name>/herdr.sock.
-            let sessionDirectory = URL(fileURLWithPath: field(4) ?? "").deletingLastPathComponent()
-            let isNamed = sessionDirectory.deletingLastPathComponent().lastPathComponent == "sessions"
-            container = ["provider": "herdr", "scope": isNamed ? sessionDirectory.lastPathComponent : "", "target": pane]
-        } else if let pane = field(5) {
-            container = ["provider": "orca", "scope": "", "target": pane]
-        }
-
-        let cwd = event["cwd"] as? String ?? ""
-        let repository = Self.repository(containing: cwd)
-        return Session(
-            id: id, agent: agent, pid: pid,
-            ancestors: ProcessInfoReader.ancestors(of: pid),
-            terminal: field(2), container: container, cwd: cwd,
-            project: URL(fileURLWithPath: repository?.root ?? cwd).lastPathComponent,
-            branch: repository?.branch
-        )
+        return pid
     }
 
     private static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish"]
+
+    private func makeSession(id: String, event: HookEvent, pid: pid_t) -> Session {
+        watchExit(of: pid)
+        let ancestors = ProcessInfoReader.ancestors(of: pid)
+
+        var container: [String: String]?
+        if let pane = event.herdrPane {
+            // Named sessions live in ~/.config/herdr/sessions/<name>/herdr.sock.
+            let sessionDirectory = URL(fileURLWithPath: event.herdrSocket ?? "").deletingLastPathComponent()
+            let isNamed = sessionDirectory.deletingLastPathComponent().lastPathComponent == "sessions"
+            container = ["provider": "herdr", "scope": isNamed ? sessionDirectory.lastPathComponent : "", "target": pane]
+        } else if let pane = event.orcaPane {
+            container = ["provider": "orca", "scope": "", "target": pane]
+        }
+
+        let repository = Self.repository(containing: event.cwd)
+        return Session(
+            id: id, agent: event.agent, pid: pid, ancestors: ancestors.map(Int.init),
+            terminal: TerminalLocation(program: event.terminal, tty: ProcessInfoReader.tty(of: pid),
+                                       app: ancestors.lazy.compactMap { ProcessInfoReader.info($0)?.name }.first(where: TerminalLocation.scriptableApps.contains),
+                                       tmuxPane: event.tmuxPane, tmuxSocket: event.tmuxSocket),
+            container: container,
+            project: URL(fileURLWithPath: repository?.root ?? event.cwd).lastPathComponent,
+            branch: repository?.branch
+        )
+    }
 
     /// Removes an agent's sessions as soon as its process exits, even without a SessionEnd event.
     private func watchExit(of pid: pid_t) {
@@ -291,6 +325,19 @@ final class HookMonitor: AgentMonitor {
         socket.close()
     }
 
+    /// `{"session": {"percent", "resetsAt"}, "week": {…}}`, without windows that have already reset.
+    private func currentUsage() -> Data? {
+        var usage: [String: Any] = [:]
+        for (key, name) in [("five_hour", "session"), ("seven_day", "week")] {
+            guard let window = rateLimits[key] as? [String: Any],
+                  let percent = window["used_percentage"] as? Double,
+                  let resetsAt = window["resets_at"] as? Double, resetsAt > Date().timeIntervalSince1970
+            else { continue }
+            usage[name] = ["percent": percent, "resetsAt": resetsAt]
+        }
+        return usage.isEmpty ? nil : try? JSONSerialization.data(withJSONObject: usage)
+    }
+
     private func publish() {
         let list = sessions.values.sorted { $0.id < $1.id }.map(\.json)
         onChange(try? JSONSerialization.data(withJSONObject: ["sessions": list], options: .sortedKeys))
@@ -314,12 +361,11 @@ final class HookMonitor: AgentMonitor {
 
     /// "Bash: npm test", "Edit: ContentView.swift", "claude-in-chrome · navigate".
     /// Activity prefers the agent's own description of a command; a permission request shows the command.
-    private static func summary(tool rawTool: String?, input: Any?, preferDescription: Bool) -> String? {
+    private static func summary(tool rawTool: String?, input: [String: Any], preferDescription: Bool) -> String? {
         guard var tool = rawTool, !tool.isEmpty else { return nil }
         if tool.hasPrefix("mcp__") {
             tool = tool.dropFirst(5).replacingOccurrences(of: "__", with: " · ")
         }
-        let input = input as? [String: Any] ?? [:]
         let keys = ["command", "file_path", "filePath", "path", "pattern", "url", "query", "description"]
         let argument = (preferDescription ? ["description"] + keys : keys)
             .lazy
@@ -332,6 +378,7 @@ final class HookMonitor: AgentMonitor {
 
     /// Finds the enclosing git repository and its current branch by reading `.git` directly.
     private static func repository(containing path: String) -> (root: String, branch: String?)? {
+        guard !path.isEmpty else { return nil }
         var directory = URL(fileURLWithPath: path)
         for _ in 0 ..< 16 {
             let git = directory.appendingPathComponent(".git")
@@ -356,25 +403,115 @@ final class HookMonitor: AgentMonitor {
     }
 }
 
-/// Reads process parents and names with sysctl, without spawning anything.
+/// One hook event, with each agent's naming mapped onto Claude Code's.
+private struct HookEvent {
+    let agent: String
+    let pid: pid_t
+    let name: String
+    let sessionID: String?
+    let cwd: String
+    let tool: String?
+    let toolInput: [String: Any]
+    let prompt: String?
+    let message: String?
+    let reply: String?
+    let needsInput: Bool
+    let rateLimits: [String: Any]?
+    let terminal: String?
+    let herdrPane: String?
+    let herdrSocket: String?
+    let orcaPane: String?
+    let tmuxPane: String?
+    let tmuxSocket: String?
+
+    /// Event names used by the supported agents, mapped onto Claude Code's.
+    private static let names: [String: String] = [
+        "beforeSubmitPrompt": "UserPromptSubmit", "userPromptSubmitted": "UserPromptSubmit", "userPromptSubmit": "UserPromptSubmit",
+        "user_prompt_submit": "UserPromptSubmit", "BeforeAgent": "UserPromptSubmit", "TaskResume": "UserPromptSubmit",
+        "beforeShellExecution": "PreToolUse", "beforeReadFile": "PreToolUse", "beforeMCPExecution": "PreToolUse",
+        "preToolUse": "PreToolUse", "pre_tool_use": "PreToolUse", "BeforeTool": "PreToolUse",
+        "afterShellExecution": "PostToolUse", "afterFileEdit": "PostToolUse", "afterMCPExecution": "PostToolUse",
+        "postToolUse": "PostToolUse", "post_tool_use": "PostToolUse", "AfterTool": "PostToolUse",
+        "afterAgentResponse": "AgentResponse",
+        "stop": "Stop", "StopFailure": "Stop", "AfterAgent": "Stop", "TaskComplete": "Stop", "TaskCancel": "Stop", "errorOccurred": "Stop",
+        "sessionStart": "SessionStart", "agentSpawn": "SessionStart", "session_start": "SessionStart", "TaskStart": "SessionStart",
+        "sessionEnd": "SessionEnd", "session_end": "SessionEnd",
+        "permission_request": "PermissionRequest", "notification": "Notification",
+    ]
+
+    init?(header: [String], payload: [String: Any]) {
+        let field = { (index: Int) in header.indices.contains(index) && !header[index].isEmpty ? header[index] : nil }
+        let text = { (keys: [String]) in keys.lazy.compactMap { payload[$0] as? String }.first { !$0.isEmpty } }
+        guard var agent = field(0), let pid = field(1).flatMap(Int32.init),
+              let rawName = text(["hook_event_name", "hookEventName", "eventName", "hookName"]) ?? field(2)
+        else { return nil }
+
+        // Cursor runs Claude Code's hooks too; its payloads say so.
+        if agent == "claude", payload["cursor_version"] != nil { agent = "cursor" }
+
+        self.agent = agent
+        self.pid = pid
+        name = Self.names[rawName] ?? rawName
+        sessionID = text(["session_id", "sessionId", "conversation_id", "conversationId", "taskId"])
+        cwd = text(["cwd", "workspaceRoot"]) ?? (payload["workspace_roots"] as? [String])?.first ?? ""
+
+        // Cline nests tool details; Copilot sends its arguments as a JSON string.
+        let nested = (payload["preToolUse"] ?? payload["postToolUse"]) as? [String: Any]
+        tool = text(["tool_name", "toolName", "tool"]) ?? nested?["toolName"] as? String
+            ?? (payload["command"] != nil ? "Shell" : nil)
+        var input = (payload["tool_input"] ?? payload["parameters"] ?? nested?["parameters"]) as? [String: Any] ?? [:]
+        if input.isEmpty, let arguments = (payload["toolArgs"] as? String)?.data(using: .utf8) {
+            input = (try? JSONSerialization.jsonObject(with: arguments)) as? [String: Any] ?? [:]
+        }
+        if input.isEmpty, let command = payload["command"] as? String { input = ["command": command] }
+        toolInput = input
+
+        prompt = text(["prompt", "userPrompt", "user_prompt"])
+        message = text(["message", "title"])
+        reply = text(["last_assistant_message", "prompt_response", "text", "response"])
+        let notificationType = text(["notification_type", "notificationType"]) ?? ""
+        needsInput = ["permission_prompt", "elicitation_dialog", "agent_needs_input"].contains(notificationType)
+        rateLimits = payload["rate_limits"] as? [String: Any]
+
+        terminal = field(3)
+        herdrPane = field(4)
+        herdrSocket = field(5)
+        orcaPane = field(6)
+        tmuxPane = field(7)
+        tmuxSocket = field(8)?.components(separatedBy: ",").first
+    }
+}
+
+/// Reads process parents, names and terminals with sysctl, without spawning anything.
 enum ProcessInfoReader {
     static func info(_ pid: pid_t) -> (parent: pid_t, name: String)? {
-        var info = kinfo_proc()
-        var size = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        guard let info = kinfo(pid) else { return nil }
         let name = withUnsafeBytes(of: info.kp_proc.p_comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
         return (info.kp_eproc.e_ppid, name)
     }
 
     /// Parents of `pid`, nearest first.
-    static func ancestors(of pid: pid_t) -> [Int] {
-        var chain: [Int] = []
+    static func ancestors(of pid: pid_t) -> [pid_t] {
+        var chain: [pid_t] = []
         var current = info(pid)?.parent
         while let parent = current, parent > 1, chain.count < 32 {
-            chain.append(Int(parent))
+            chain.append(parent)
             current = info(parent)?.parent
         }
         return chain
+    }
+
+    /// The controlling terminal of `pid`, e.g. "/dev/ttys004".
+    static func tty(of pid: pid_t) -> String? {
+        guard let device = kinfo(pid)?.kp_eproc.e_tdev, device != -1, let name = devname(device, S_IFCHR) else { return nil }
+        return "/dev/" + String(cString: name)
+    }
+
+    private static func kinfo(_ pid: pid_t) -> kinfo_proc? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        return info
     }
 }

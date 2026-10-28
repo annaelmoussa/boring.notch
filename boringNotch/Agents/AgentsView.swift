@@ -12,21 +12,92 @@ struct AgentsView: View {
     @ObservedObject var agents = AgentsManager.shared
 
     var body: some View {
-        if agents.sessions.isEmpty {
-            AgentsEmptyState()
-        } else {
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 2) {
-                    ForEach(agents.sessions) { session in
-                        AgentRow(session: session) {
-                            agents.focus(session)
-                            vm.close()
+        VStack(spacing: 0) {
+            if let usage = agents.claudeUsage {
+                ClaudeUsageBar(usage: usage)
+            }
+            if agents.sessions.isEmpty {
+                AgentsEmptyState()
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 2) {
+                        ForEach(agents.sessions) { session in
+                            AgentRow(session: session) {
+                                agents.focus(session)
+                                vm.close()
+                            } onReply: {
+                                vm.close()
+                                AgentReplyPanel.show(for: session)
+                            }
                         }
                     }
+                    .padding(.top, 4)
                 }
-                .padding(.top, 4)
             }
         }
+        // The view stays alive while the notch is closed, so usage is refreshed on each opening.
+        .onAppear(perform: agents.refreshClaudeUsage)
+        .onChange(of: vm.notchState) { _, state in
+            if state == .open { agents.refreshClaudeUsage() }
+        }
+    }
+}
+
+/// Claude plan usage: the 5-hour session window and the weekly limit.
+private struct ClaudeUsageBar: View {
+    let usage: HookProvider.Usage
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text("Claude")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+            if let session = usage.session {
+                UsageGauge(label: "5h", window: session)
+            }
+            if let week = usage.week {
+                UsageGauge(label: "Week", window: week)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct UsageGauge: View {
+    let label: String
+    let window: HookProvider.Usage.Window
+
+    private var color: Color {
+        switch window.percent {
+        case 90...: .red
+        case 70...: .orange
+        default: .white.opacity(0.7)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .foregroundStyle(.gray)
+            Capsule()
+                .fill(.white.opacity(0.12))
+                .frame(width: 56, height: 4)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(color)
+                        .frame(width: 56 * min(1, max(0, window.percent / 100)), height: 4)
+                }
+            Text("\(Int(window.percent.rounded()))%")
+                .monospacedDigit()
+                .foregroundStyle(color)
+            if let resetsAt = window.resetsAt, resetsAt > .now {
+                Text("· \(resetsAt, style: .relative)")
+                    .foregroundStyle(.gray)
+            }
+        }
+        .font(.system(size: 10))
     }
 }
 
@@ -65,6 +136,7 @@ private struct AgentsEmptyState: View {
 private struct AgentRow: View {
     let session: AgentSession
     let onSelect: () -> Void
+    let onReply: () -> Void
 
     @ObservedObject private var agents = AgentsManager.shared
     @State private var isHovering = false
@@ -78,7 +150,7 @@ private struct AgentRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(session.agent)
+                    Text(agents.displayName(of: session.agent))
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
                     Text(session.title)
@@ -99,6 +171,10 @@ private struct AgentRow: View {
             if session.approval != nil {
                 approvalButtons
             } else {
+                if isHovering, session.canReply {
+                    Button("Reply", action: onReply)
+                        .buttonStyle(ApprovalButtonStyle(fill: .white.opacity(0.1), foreground: .white))
+                }
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(session.status.label)
                         .font(.system(size: 11, weight: .medium))

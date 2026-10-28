@@ -60,22 +60,33 @@ enum OrcaProvider: AgentProvider {
                     detail: firstAgentLine(agent.taskTitle ?? agent.displayName ?? agent.prompt),
                     status: Self.status(agent.state),
                     since: agent.stateStartedAt.map { Date(timeIntervalSince1970: $0 / 1000) },
-                    focusTarget: agent.paneKey
+                    focusTarget: agent.paneKey,
+                    canReply: true
                 )
             }
         }
     }
 
     static func focus(_ session: AgentSession) async {
-        // Orca pane keys are "<tabId>:<leafId>"; terminal commands take a handle instead.
-        if let terminals = await runAgentCLI("orca", ["terminal", "list", "--json"], as: TerminalList.self),
-           let terminal = terminals.terminals.first(where: { "\($0.tabId ?? ""):\($0.leafId ?? "")" == session.focusTarget })
-        {
-            _ = await XPCHelperClient.shared.runAgentCLI("orca", arguments: ["terminal", "switch", "--terminal", terminal.handle])
+        if let handle = await terminalHandle(of: session) {
+            _ = await XPCHelperClient.shared.runAgentCLI("orca", arguments: ["terminal", "switch", "--terminal", handle])
         }
         await MainActor.run {
             NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).first?.activate()
         }
+    }
+
+    static func reply(to session: AgentSession, text: String) async -> Bool {
+        guard let handle = await terminalHandle(of: session) else { return false }
+        return await XPCHelperClient.shared.runAgentCLI("orca", arguments: ["terminal", "send", "--terminal", handle, "--text", text, "--enter"]) != nil
+    }
+
+    /// Orca pane keys are "<tabId>:<leafId>"; terminal commands take a handle instead.
+    private static func terminalHandle(of session: AgentSession) async -> String? {
+        await runAgentCLI("orca", ["terminal", "list", "--json"], as: TerminalList.self)?
+            .terminals
+            .first { "\($0.tabId ?? ""):\($0.leafId ?? "")" == session.focusTarget }?
+            .handle
     }
 
     private static func status(_ raw: String) -> AgentStatus {

@@ -66,13 +66,19 @@ struct AgentSession: Identifiable, Equatable {
     var location: String? = nil
     /// The app hosting the agent, used to bring it forward.
     var hostPID: pid_t? = nil
-    /// The same agent as reported by a workspace manager, e.g. a Herdr pane. It is hidden in favour
-    /// of this session, which knows more, and used to jump to the exact pane.
-    var containerID: String? = nil
+    /// The workspace manager pane the agent runs in, e.g. a Herdr pane. The manager's own session for
+    /// that pane is hidden in favour of this one, which knows more; the pane is used to jump and reply.
+    var container: AgentContainer? = nil
     /// What the agent asks permission for, while it waits for an answer that the notch can give.
     var approval: String? = nil
     /// The agent shows nothing until `approval` is answered, so it is handed back when its window is in front.
     var approvalBlocksAgent = false
+    /// Text can be typed into the agent's terminal from the notch.
+    var canReply = false
+
+    var containerID: String? {
+        container?.id
+    }
 
     var providerName: String {
         location ?? AgentProviders.provider(id: provider)?.name ?? provider
@@ -81,5 +87,16 @@ struct AgentSession: Identifiable, Equatable {
     /// The id a provider gives to the agent at `target`, shared so that sessions can refer to each other.
     static func id(provider: String, scope: String?, target: String) -> String {
         "\(provider):\(scope ?? ""):\(target)"
+    }
+}
+
+/// A pane of a workspace manager, as reported by an agent running inside it.
+struct AgentContainer: Equatable {
+    let provider: String
+    let scope: String?
+    let target: String
+
+    var id: String {
+        AgentSession.id(provider: provider, scope: scope, target: target)
     }
 }

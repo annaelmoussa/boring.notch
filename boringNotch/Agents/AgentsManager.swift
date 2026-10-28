@@ -17,6 +17,8 @@ extension Defaults.Keys {
     static let agentSounds = Key<Bool>("agentSounds", default: true)
     /// Answer agents' permission requests from the notch instead of their own interface.
     static let agentApprovals = Key<Bool>("agentApprovals", default: true)
+    /// Show Claude plan usage in the Agents tab, relayed from Claude Code's status line.
+    static let showClaudeUsage = Key<Bool>("showClaudeUsage", default: false)
 }
 
 /// Receives agent state pushed by the XPC helper and publishes a merged, priority-sorted list.
@@ -27,6 +29,10 @@ final class AgentsManager: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     /// The latest session that started waiting for the user or finished its work.
     @Published private(set) var attentionSession: AgentSession?
+    /// Claude plan usage, refreshed when the notch opens.
+    @Published private(set) var claudeUsage: HookProvider.Usage?
+    /// Display names of agent ids, e.g. "claude" → "Claude Code".
+    private var agentNames: [String: String] = [:]
 
     /// Finished or idle agents are hidden once they have been inactive for this long.
     private static let inactivityLimit: TimeInterval = 30 * 60
@@ -75,6 +81,17 @@ final class AgentsManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        Defaults.publisher(.showClaudeUsage, options: [])
+            .map(\.newValue)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                Task {
+                    await HookProvider.setUsageRelay(enabled)
+                    self?.refreshClaudeUsage()
+                }
+            }
+            .store(in: &cancellables)
+
         // An agent that waits for the notch gets its request back once the user switches to it.
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.didActivateApplicationNotification)
@@ -85,10 +102,45 @@ final class AgentsManager: ObservableObject {
 
     /// Jumps to the agent, through the workspace manager hosting it when there is one.
     func focus(_ session: AgentSession) {
-        let target = session.containerID.flatMap { containers[$0] } ?? session
+        let target = paneSession(of: session)
         guard let provider = AgentProviders.provider(id: target.provider) else { return }
         Task {
             await provider.focus(target)
+        }
+    }
+
+    /// Types a reply into the agent's terminal, through the workspace manager hosting it when there is one.
+    func reply(to session: AgentSession, text: String) async -> Bool {
+        let target = paneSession(of: session)
+        guard let provider = AgentProviders.provider(id: target.provider) else { return false }
+        return await provider.reply(to: target, text: text)
+    }
+
+    /// The workspace manager's session for the pane hosting `session`, even when that manager does not
+    /// recognise the agent itself; otherwise `session`.
+    private func paneSession(of session: AgentSession) -> AgentSession {
+        guard let container = session.container else { return session }
+        if let known = containers[container.id] { return known }
+        guard AgentProviders.provider(id: container.provider) != nil else { return session }
+        return AgentSession(
+            id: container.id, provider: container.provider, agent: session.agent, title: session.title,
+            detail: nil, status: session.status, focusTarget: container.target, scope: container.scope
+        )
+    }
+
+    func displayName(of agent: String) -> String {
+        agentNames[agent] ?? agent
+    }
+
+    /// Reads the latest Claude usage the helper received; nothing is fetched or polled.
+    func refreshClaudeUsage() {
+        guard Defaults[.showClaudeUsage] else {
+            claudeUsage = nil
+            return
+        }
+        Task {
+            let usage = await HookProvider.claudeUsage()
+            if usage != claudeUsage { claudeUsage = usage }
         }
     }
 
@@ -103,6 +155,9 @@ final class AgentsManager: ObservableObject {
     private func start() {
         guard updatesTask == nil else { return }
         updatesTask = Task {
+            let integrations = await HookProvider.integrations()
+            agentNames = Dictionary(integrations.map { ($0.agent, $0.name) }, uniquingKeysWith: { first, _ in first })
+            if Defaults[.showClaudeUsage] { await HookProvider.setUsageRelay(true) }
             var generation = -1
             while !Task.isCancelled {
                 guard let update = await XPCHelperClient.shared.waitForAgentUpdate(after: generation) else {

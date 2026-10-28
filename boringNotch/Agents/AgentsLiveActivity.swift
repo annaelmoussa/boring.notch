@@ -45,7 +45,7 @@ struct AgentsLiveActivity: View {
                 .overlay {
                     if isExpanded, let session = agents.attentionSession {
                         HStack(spacing: 6) {
-                            Text(session.agent)
+                            Text(agents.displayName(of: session.agent))
                                 .foregroundStyle(.white)
                             Text(session.approval ?? session.title)
                                 .foregroundStyle(.gray)

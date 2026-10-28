@@ -6,21 +6,31 @@
 import AppKit
 import Foundation
 
-/// Agents that report themselves through hooks or plugins: Claude Code, Codex, OpenCode and Pi.
-/// The helper's `HookMonitor` receives their events; this provider also answers their
-/// permission requests and manages the integrations.
+/// Agents that report themselves through hooks or plugins (Claude Code, Codex, Gemini CLI, Cursor,
+/// OpenCode, Pi and more). The helper's `HookMonitor` receives their events; this provider also
+/// answers their permission requests, types replies into their terminal and manages the integrations.
 enum HookProvider: AgentProvider {
     static let id = "hooks"
     static let name = "Terminal"
 
-    /// Agents with an integration, in display order.
-    static let integrations: [(id: String, name: String)] = [
-        ("claude", "Claude Code"), ("codex", "Codex"), ("opencode", "OpenCode"), ("pi", "Pi"),
-    ]
-
-    struct IntegrationStatus: Decodable {
+    struct Integration: Decodable, Identifiable {
+        let name: String
+        let agent: String
         let available: Bool
         let installed: Bool
+        let note: String?
+
+        var id: String { name }
+    }
+
+    struct Usage: Decodable, Equatable {
+        struct Window: Decodable, Equatable {
+            let percent: Double
+            let resetsAt: Date?
+        }
+
+        let session: Window?
+        let week: Window?
     }
 
     private struct Payload: Decodable {
@@ -36,7 +46,8 @@ enum HookProvider: AgentProvider {
             let detail: String?
             let since: Double
             let approval: String?
-            let approvalBlocksAgent: Bool?
+            let approvalBlocksAgent: Bool
+            let canReply: Bool
         }
 
         let sessions: [Session]
@@ -57,20 +68,25 @@ enum HookProvider: AgentProvider {
                 focusTarget: session.id,
                 location: host?.localizedName ?? session.terminal.map { terminalNames[$0] ?? $0 },
                 hostPID: host?.processIdentifier,
-                containerID: containerID(session.container),
+                container: container(session.container),
                 approval: session.approval,
-                approvalBlocksAgent: session.approvalBlocksAgent ?? false
+                approvalBlocksAgent: session.approvalBlocksAgent,
+                canReply: session.canReply
             )
         }
     }
 
+    /// Selects the agent's exact tab or pane when its terminal allows it, otherwise brings the terminal forward.
     static func focus(_ session: AgentSession) async {
+        if await request(["focus": session.id]) == Data("true".utf8) { return }
         await MainActor.run {
             session.hostPID.flatMap { NSRunningApplication(processIdentifier: $0) }?.activate()
         }
     }
 
-    // MARK: - Permission requests
+    static func reply(to session: AgentSession, text: String) async -> Bool {
+        await request(["reply": session.id, "text": text]) == Data("true".utf8)
+    }
 
     static func respond(to session: AgentSession, with decision: AgentDecision) async {
         _ = await request(["decide": session.id, "behavior": decision.rawValue])
@@ -78,21 +94,35 @@ enum HookProvider: AgentProvider {
 
     // MARK: - Integrations
 
-    static func integrationStatus() async -> [String: IntegrationStatus] {
+    static func integrations() async -> [Integration] {
         await integrations(["integrations": "status"])
     }
 
-    static func install(_ agent: String) async -> [String: IntegrationStatus] {
-        await integrations(["install": agent])
+    static func install(_ integration: Integration) async -> [Integration] {
+        await integrations(["install": integration.name])
     }
 
-    static func uninstall(_ agent: String) async -> [String: IntegrationStatus] {
-        await integrations(["uninstall": agent])
+    static func uninstall(_ integration: Integration) async -> [Integration] {
+        await integrations(["uninstall": integration.name])
     }
 
-    private static func integrations(_ body: [String: String]) async -> [String: IntegrationStatus] {
-        guard let reply = await request(body) else { return [:] }
-        return (try? JSONDecoder().decode([String: IntegrationStatus].self, from: reply)) ?? [:]
+    private static func integrations(_ body: [String: String]) async -> [Integration] {
+        guard let reply = await request(body) else { return [] }
+        return (try? JSONDecoder().decode([Integration].self, from: reply)) ?? []
+    }
+
+    // MARK: - Claude usage
+
+    static func claudeUsage() async -> Usage? {
+        guard let reply = await request(["usage": "claude"]) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try? decoder.decode(Usage.self, from: reply)
+    }
+
+    /// Relays Claude Code's status line, which carries plan usage, to the notch.
+    static func setUsageRelay(_ enabled: Bool) async {
+        _ = await request(["usageRelay": enabled ? "on" : "off"])
     }
 
     private static func request(_ body: [String: String]) async -> Data? {
@@ -100,17 +130,18 @@ enum HookProvider: AgentProvider {
         return await XPCHelperClient.shared.agentRequest(id, payload: payload)
     }
 
+    // MARK: - Helpers
+
     /// Display names for `TERM_PROGRAM`, used when the hosting app cannot be identified.
     private static let terminalNames = [
         "Apple_Terminal": "Terminal", "ghostty": "Ghostty", "iTerm.app": "iTerm", "vscode": "VS Code",
         "WarpTerminal": "Warp", "WezTerm": "WezTerm", "zed": "Zed", "tmux": "tmux",
     ]
 
-    /// `{"provider": "herdr", "scope": "", "target": "w1:p1"}` → the id that provider gives the agent.
-    private static func containerID(_ container: [String: String]?) -> String? {
+    /// `{"provider": "herdr", "scope": "", "target": "w1:p1"}`
+    private static func container(_ container: [String: String]?) -> AgentContainer? {
         guard let container, let provider = container["provider"], let target = container["target"] else { return nil }
-        let scope = container["scope"].flatMap { $0.isEmpty ? nil : $0 }
-        return AgentSession.id(provider: provider, scope: scope, target: target)
+        return AgentContainer(provider: provider, scope: container["scope"].flatMap { $0.isEmpty ? nil : $0 }, target: target)
     }
 
     private static func status(_ raw: String) -> AgentStatus {
