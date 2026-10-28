@@ -116,7 +116,7 @@ Supported agents: Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot CLI, Op
 - **Permission requests:** allow or deny an agent's request straight from the notch. Claude Code and OpenCode keep asking in their own window too, and whichever answer comes first wins; other agents get the request back after 20 seconds.
 - **Agents tab:** every agent, most urgent first, with its project and branch, what it is doing or its last reply, and where it runs. Agents that have been done or idle for 30 minutes are hidden.
 - **Jump and reply:** click a row to jump to the agent's exact tab or pane (Ghostty, Terminal, iTerm, tmux, Herdr, Orca), or hover it and choose Reply to type an answer into its terminal. macOS asks once for permission to control the terminal app.
-- **Claude plan usage:** the 5-hour and weekly limits, relayed by Claude Code's own status line, which keeps showing as before.
+- **Plan usage:** the 5-hour and weekly limits of Claude, relayed by Claude Code's own status line (which keeps showing as before), and of Codex, read from its logs. Optionally, the OpenRouter credit left, using the key saved by Pi or OpenCode.
 
 Connect each agent once in **Settings → Agents → Integrations**. This adds a small hook to its configuration (or a plugin, for OpenCode and Pi), leaving the rest untouched and keeping a backup of the original file. Everything stays on your Mac: hooks talk to the notch over a local socket and do nothing when the notch is not running. Codex asks you to trust new hooks once: run `/hooks` in Codex.
 

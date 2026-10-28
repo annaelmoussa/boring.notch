@@ -17,8 +17,10 @@ extension Defaults.Keys {
     static let agentSounds = Key<Bool>("agentSounds", default: true)
     /// Answer agents' permission requests from the notch instead of their own interface.
     static let agentApprovals = Key<Bool>("agentApprovals", default: true)
-    /// Show Claude plan usage in the Agents tab, relayed from Claude Code's status line.
-    static let showClaudeUsage = Key<Bool>("showClaudeUsage", default: false)
+    /// Show plan usage in the Agents tab: Claude, relayed from its status line, and Codex, from its logs.
+    static let showAgentUsage = Key<Bool>("showAgentUsage", default: false)
+    /// Also show the OpenRouter credit balance, fetched with the key saved by Pi or OpenCode.
+    static let showOpenRouterCredits = Key<Bool>("showOpenRouterCredits", default: false)
 }
 
 /// What the rest of the notch needs to know about agents. It changes far less often than the agent
@@ -39,8 +41,8 @@ final class AgentsManager: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     /// The latest session that started waiting for the user or finished its work.
     @Published private(set) var attentionSession: AgentSession?
-    /// Claude plan usage, refreshed when the notch opens.
-    @Published private(set) var claudeUsage: HookProvider.Usage?
+    /// Plan usage, refreshed when the notch opens.
+    @Published private(set) var usage: HookProvider.Usage?
     /// Display names of agent ids, e.g. "claude" → "Claude Code".
     private var agentNames: [String: String] = [:]
 
@@ -93,15 +95,20 @@ final class AgentsManager: ObservableObject {
             }
             .store(in: &cancellables)
 
-        Defaults.publisher(.showClaudeUsage, options: [])
+        Defaults.publisher(.showAgentUsage, options: [])
             .map(\.newValue)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] enabled in
                 Task {
                     await HookProvider.setUsageRelay(enabled)
-                    self?.refreshClaudeUsage()
+                    self?.refreshUsage()
                 }
             }
+            .store(in: &cancellables)
+
+        Defaults.publisher(.showOpenRouterCredits, options: [])
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshUsage() }
             .store(in: &cancellables)
 
         // An agent that waits for the notch gets its request back once the user switches to it.
@@ -144,15 +151,15 @@ final class AgentsManager: ObservableObject {
         agentNames[agent] ?? agent
     }
 
-    /// Reads the latest Claude usage the helper received; nothing is fetched or polled.
-    func refreshClaudeUsage() {
-        guard Defaults[.showClaudeUsage] else {
-            claudeUsage = nil
+    /// Reads the latest plan usage when the notch opens; nothing is polled.
+    func refreshUsage() {
+        guard Defaults[.showAgentUsage] else {
+            usage = nil
             return
         }
         Task {
-            let usage = await HookProvider.claudeUsage()
-            if usage != claudeUsage { claudeUsage = usage }
+            let latest = await HookProvider.usage(includeOpenRouter: Defaults[.showOpenRouterCredits])
+            if latest != usage { usage = latest }
         }
     }
 
@@ -169,7 +176,7 @@ final class AgentsManager: ObservableObject {
         updatesTask = Task {
             let integrations = await HookProvider.integrations()
             agentNames = Dictionary(integrations.map { ($0.agent, $0.name) }, uniquingKeysWith: { first, _ in first })
-            if Defaults[.showClaudeUsage] { await HookProvider.setUsageRelay(true) }
+            if Defaults[.showAgentUsage] { await HookProvider.setUsageRelay(true) }
             var generation = -1
             while !Task.isCancelled {
                 guard let update = await XPCHelperClient.shared.waitForAgentUpdate(after: generation) else {

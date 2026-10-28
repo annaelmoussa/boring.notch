@@ -70,13 +70,19 @@ final class HookMonitor: AgentMonitor {
     /// Open permission request connections, keyed by session id.
     private var pendingApprovals: [String: LineSocket] = [:]
     private var exitWatchers: [pid_t: DispatchSourceProcess] = [:]
-    /// The `rate_limits` object of Claude Code's latest status line update.
+    /// The `rate_limits` object of Claude Code's latest status line update, kept on disk across restarts.
     private var rateLimits: [String: Any] = [:]
+    private static let rateLimitsPath = directory + "/claude-rate-limits.json"
 
     init(queue: DispatchQueue, onChange: @escaping (Data?) -> Void) {
         self.queue = queue
         self.onChange = onChange
         try? FileManager.default.createDirectory(atPath: Self.directory, withIntermediateDirectories: true)
+        if let data = FileManager.default.contents(atPath: Self.rateLimitsPath),
+           let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            rateLimits = saved
+        }
         listener = LineSocketListener(path: Self.socketPath, queue: queue) { [weak self] socket in
             self?.receive(on: socket)
         }
@@ -87,7 +93,7 @@ final class HookMonitor: AgentMonitor {
     /// - `{"decide": <session id>, "behavior": "allow" | "deny" | "defer"}`
     /// - `{"focus": <session id>}`, `{"reply": <session id>, "text": …}`: replies `true` when handled
     /// - `{"integrations": "status"}`, `{"install": <name>}`, `{"uninstall": <name>}`
-    /// - `{"usage": "claude"}`: the latest plan usage relayed by Claude Code's status line
+    /// - `{"usage": "all", "openrouter": "on" | "off"}`: plan usage, see `UsageReport`
     /// - `{"usageRelay": "on" | "off"}`
     func handle(_ request: Data, reply: @escaping (Data?) -> Void) {
         guard let object = try? JSONSerialization.jsonObject(with: request) as? [String: String] else { return reply(nil) }
@@ -104,8 +110,12 @@ final class HookMonitor: AgentMonitor {
             let terminal = sessions[id]?.terminal
             return DispatchQueue.global().async { reply(Self.encode(terminal?.send(text) == true)) }
         }
-        if object["usage"] == "claude" {
-            return reply(currentUsage())
+        if object["usage"] != nil {
+            let limits = rateLimits
+            let includeOpenRouter = object["openrouter"] == "on"
+            return DispatchQueue.global().async {
+                UsageReport.build(claudeRateLimits: limits, includeOpenRouter: includeOpenRouter, reply: reply)
+            }
         }
         if let state = object["usageRelay"] {
             AgentIntegrations.setStatusLineRelay(state == "on")
@@ -156,7 +166,10 @@ final class HookMonitor: AgentMonitor {
     private func handle(_ event: HookEvent, socket: LineSocket) {
         if event.name == "StatusLine" {
             socket.close()
-            if let limits = event.rateLimits { rateLimits = limits }
+            if let limits = event.rateLimits, !NSDictionary(dictionary: limits).isEqual(to: rateLimits) {
+                rateLimits = limits
+                try? JSONSerialization.data(withJSONObject: limits).write(to: URL(fileURLWithPath: Self.rateLimitsPath), options: .atomic)
+            }
             return
         }
         guard let agentPID = agentProcess(for: event) else { return socket.close() }
@@ -323,19 +336,6 @@ final class HookMonitor: AgentMonitor {
             }
         }
         socket.close()
-    }
-
-    /// `{"session": {"percent", "resetsAt"}, "week": {…}}`, without windows that have already reset.
-    private func currentUsage() -> Data? {
-        var usage: [String: Any] = [:]
-        for (key, name) in [("five_hour", "session"), ("seven_day", "week")] {
-            guard let window = rateLimits[key] as? [String: Any],
-                  let percent = window["used_percentage"] as? Double,
-                  let resetsAt = window["resets_at"] as? Double, resetsAt > Date().timeIntervalSince1970
-            else { continue }
-            usage[name] = ["percent": percent, "resetsAt": resetsAt]
-        }
-        return usage.isEmpty ? nil : try? JSONSerialization.data(withJSONObject: usage)
     }
 
     private func publish() {

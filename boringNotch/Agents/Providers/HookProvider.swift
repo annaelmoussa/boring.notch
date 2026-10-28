@@ -23,14 +23,23 @@ enum HookProvider: AgentProvider {
         var id: String { name }
     }
 
+    /// Plan usage per provider: rate limit windows (Claude, Codex) or a credit balance (OpenRouter).
     struct Usage: Decodable, Equatable {
+        struct Provider: Decodable, Equatable, Identifiable {
+            let name: String
+            let windows: [Window]?
+            let balance: Double?
+
+            var id: String { name }
+        }
+
         struct Window: Decodable, Equatable {
+            let label: String
             let percent: Double
             let resetsAt: Date?
         }
 
-        let session: Window?
-        let week: Window?
+        let providers: [Provider]
     }
 
     private struct Payload: Decodable {
@@ -111,13 +120,13 @@ enum HookProvider: AgentProvider {
         return (try? JSONDecoder().decode([Integration].self, from: reply)) ?? []
     }
 
-    // MARK: - Claude usage
+    // MARK: - Usage
 
-    static func claudeUsage() async -> Usage? {
-        guard let reply = await request(["usage": "claude"]) else { return nil }
+    static func usage(includeOpenRouter: Bool) async -> Usage? {
+        guard let reply = await request(["usage": "all", "openrouter": includeOpenRouter ? "on" : "off"]) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
-        return try? decoder.decode(Usage.self, from: reply)
+        return (try? decoder.decode(Usage.self, from: reply)).flatMap { $0.providers.isEmpty ? nil : $0 }
     }
 
     /// Relays Claude Code's status line, which carries plan usage, to the notch.

@@ -13,8 +13,8 @@ struct AgentsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let usage = agents.claudeUsage {
-                ClaudeUsageBar(usage: usage)
+            if let usage = agents.usage {
+                UsageBar(usage: usage)
             }
             if agents.sessions.isEmpty {
                 AgentsEmptyState()
@@ -36,37 +36,45 @@ struct AgentsView: View {
             }
         }
         // The view stays alive while the notch is closed, so usage is refreshed on each opening.
-        .onAppear(perform: agents.refreshClaudeUsage)
+        .onAppear(perform: agents.refreshUsage)
         .onChange(of: vm.notchState) { _, state in
-            if state == .open { agents.refreshClaudeUsage() }
+            if state == .open { agents.refreshUsage() }
         }
     }
 }
 
-/// Claude plan usage: the 5-hour session window and the weekly limit.
-private struct ClaudeUsageBar: View {
+/// Plan usage of each provider on one line: rate limit windows, or the remaining credit.
+private struct UsageBar: View {
     let usage: HookProvider.Usage
 
     var body: some View {
-        HStack(spacing: 16) {
-            Text("Claude")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-            if let session = usage.session {
-                UsageGauge(label: "5h", window: session)
-            }
-            if let week = usage.week {
-                UsageGauge(label: "Week", window: week)
+        HStack(spacing: 18) {
+            ForEach(usage.providers) { provider in
+                HStack(spacing: 6) {
+                    Text(provider.name)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                    ForEach(provider.windows ?? [], id: \.label) { window in
+                        UsageValue(window: window)
+                    }
+                    if let balance = provider.balance {
+                        Text(balance.formatted(.currency(code: "USD")))
+                            .foregroundStyle(balance <= 0 ? .red : .white.opacity(0.7))
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
+        .font(.system(size: 11))
+        .monospacedDigit()
+        .lineLimit(1)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
     }
 }
 
-private struct UsageGauge: View {
-    let label: String
+/// "5h 39%", colored as the limit gets close; the reset time shows on hover.
+private struct UsageValue: View {
     let window: HookProvider.Usage.Window
 
     private var color: Color {
@@ -78,26 +86,13 @@ private struct UsageGauge: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(label)
+        HStack(spacing: 3) {
+            Text(window.label)
                 .foregroundStyle(.gray)
-            Capsule()
-                .fill(.white.opacity(0.12))
-                .frame(width: 56, height: 4)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(color)
-                        .frame(width: 56 * min(1, max(0, window.percent / 100)), height: 4)
-                }
             Text("\(Int(window.percent.rounded()))%")
-                .monospacedDigit()
                 .foregroundStyle(color)
-            if let resetsAt = window.resetsAt, resetsAt > .now {
-                Text("· \(resetsAt, style: .relative)")
-                    .foregroundStyle(.gray)
-            }
         }
-        .font(.system(size: 10))
+        .help(window.resetsAt.map { "Resets \($0.formatted(.relative(presentation: .named)))" } ?? "")
     }
 }
 

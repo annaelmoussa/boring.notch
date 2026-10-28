@@ -28,13 +28,16 @@ struct AgentsSettings: View {
                 Defaults.Toggle(key: .agentApprovals) {
                     Text("Answer permission requests from the notch")
                 }
-                Defaults.Toggle(key: .showClaudeUsage) {
-                    Text("Show Claude plan usage")
+                Defaults.Toggle(key: .showAgentUsage) {
+                    Text("Show plan usage")
+                }
+                Defaults.Toggle(key: .showOpenRouterCredits) {
+                    Text("Show OpenRouter credit")
                 }
             } header: {
                 Text("General")
             } footer: {
-                Text("Agents other than Claude Code and OpenCode wait for an answer before showing their own prompt, so their requests go back to them after 20 seconds or as soon as you switch to them. Plan usage is relayed by Claude Code's status line while a session runs; your own status line keeps showing.")
+                Text("Agents other than Claude Code and OpenCode wait for an answer before showing their own prompt, so their requests go back to them after 20 seconds or as soon as you switch to them. Plan usage covers Claude, relayed by its status line (your own keeps showing), and Codex, read from its logs; nothing leaves your Mac. OpenRouter credit is fetched from OpenRouter, at most every 5 minutes, with the key saved by Pi or OpenCode.")
                     .foregroundStyle(.secondary)
             }
 
