@@ -68,6 +68,7 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
     private var process: Process?
     private var pipeHandler: JSONLinesPipeHandler?
     private var streamTask: Task<Void, Never>?
+    private var terminationObserver: NSObjectProtocol?
 
     // MARK: - Initialization
     init?() {
@@ -95,6 +96,13 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
             MRMediaRemoteSetShuffleModePointer, to: (@convention(c) (Int) -> Void).self)
         MRMediaRemoteSetRepeatModeFunction = unsafeBitCast(
             MRMediaRemoteSetRepeatModePointer, to: (@convention(c) (Int) -> Void).self)
+
+        // The controller outlives the app's teardown, so its streaming process is stopped explicitly.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            self?.process?.terminate()
+        }
 
         Task { await setupNowPlayingObserver() }
     }

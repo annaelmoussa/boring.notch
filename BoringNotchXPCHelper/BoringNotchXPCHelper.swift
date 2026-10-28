@@ -139,6 +139,67 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
         reply(false)
     }
 
+    // MARK: - Coding agents
+
+    /// Long-poll: replies with every agent monitor's payload, keyed by provider id, once it differs from `generation`.
+    @objc func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, [String: Data]) -> Void) {
+        AgentEventMonitor.shared.waitForUpdate(after: generation, reply: reply)
+    }
+
+    /// Forwards a provider-specific request to the matching agent monitor.
+    @objc func agentRequest(_ provider: String, payload: Data, with reply: @escaping (Data?) -> Void) {
+        AgentEventMonitor.shared.handle(payload, for: provider, reply: reply)
+    }
+
+    private static let agentCLIs = Set(AgentEventMonitor.monitorTypes.flatMap { $0.tools })
+    private static let agentCLISearchPaths = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        NSHomeDirectory() + "/.local/bin",
+        NSHomeDirectory() + "/.cargo/bin",
+    ]
+    private static let agentCLITimeout: TimeInterval = 5
+
+    /// Runs an allowlisted agent CLI and replies with its stdout, or nil on failure. Used for user actions only.
+    @objc func runAgentCLI(_ tool: String, arguments: [String], with reply: @escaping (Data?) -> Void) {
+        guard Self.agentCLIs.contains(tool),
+              let executable = Self.agentCLISearchPaths
+                .map({ URL(fileURLWithPath: $0).appendingPathComponent(tool) })
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) })
+        else {
+            reply(nil)
+            return
+        }
+
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = NSHomeDirectory()
+        environment["PATH"] = (Self.agentCLISearchPaths + ["/usr/bin", "/bin"]).joined(separator: ":")
+        process.environment = environment
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            reply(nil)
+            return
+        }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.agentCLITimeout) {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global().async {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            reply(process.terminationStatus == 0 ? data : nil)
+        }
+    }
+
     // MARK: - Private helpers for DisplayServices / IOKit access
     private func displayServicesGetBrightness(displayID: CGDirectDisplayID, out: inout Float) -> Bool {
         guard let sym = dlsym(DisplayServicesHandle.handle, "DisplayServicesGetBrightness") else { return false }

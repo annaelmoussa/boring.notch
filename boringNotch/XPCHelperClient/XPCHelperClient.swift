@@ -241,6 +241,54 @@ final class XPCHelperClient: NSObject {
             return false
         }
     }
+
+    // MARK: - Coding Agents
+
+    /// Waits until the agent state differs from `generation`. Returns nil if the helper is unreachable.
+    nonisolated func waitForAgentUpdate(after generation: Int) async -> (generation: Int, payloads: [String: Data])? {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.waitForAgentUpdate(after: generation) { generation, payloads in
+                    continuation.resume(returning: (generation, payloads))
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated func agentRequest(_ provider: String, payload: Data) async -> Data? {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.agentRequest(provider, payload: payload) { data in
+                    continuation.resume(returning: data)
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated func runAgentCLI(_ tool: String, arguments: [String]) async -> Data? {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.runAgentCLI(tool, arguments: arguments) { data in
+                    continuation.resume(returning: data)
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
 }
 
 extension Notification.Name {

@@ -105,6 +105,30 @@ brew install --cask TheBoredTeam/boring-notch/boring-notch
 - Use the controls to manage your music like a rockstar.
 - Click the star in your menu bar to customize your notch to your heart's content.
 
+## Coding agents
+
+The notch shows what your coding agents are doing, wherever they run: in any terminal, in an editor, or in a workspace manager such as [Herdr](https://herdr.dev) or [Orca](https://github.com/stablyai/orca).
+
+Supported agents: Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot CLI, OpenCode, Pi, Oh My Pi, Qwen Code, Factory Droid, Qoder, QoderWork, CodeBuddy, WorkBuddy, StepFun, Grok CLI, Kimi CLI, Kiro CLI, Trae, Trae CLI, ZCode, Google Antigravity and Cline.
+
+- **Closed notch:** a status icon and a counter while agents are working or waiting for you.
+- **Alerts:** the notch widens, with a sound, when an agent needs input or finishes its work. Several alerts are shown one after another.
+- **Permission requests:** allow or deny an agent's request straight from the notch. Claude Code and OpenCode keep asking in their own window too, and whichever answer comes first wins; other agents get the request back after 20 seconds.
+- **Agents tab:** every agent, most urgent first, with its project and branch, what it is doing or its last reply, and where it runs. Agents that have been done or idle for 30 minutes are hidden.
+- **Jump and reply:** click a row to jump to the agent's exact tab or pane (Ghostty, Terminal, iTerm, tmux, Herdr, Orca), or hover it and choose Reply to type an answer into its terminal. macOS asks once for permission to control the terminal app.
+- **Plan usage:** the 5-hour and weekly limits of Claude, relayed by Claude Code's own status line (which keeps showing as before), and of Codex, read from its logs. Optionally, the OpenRouter credit left, using the key saved by Pi or OpenCode.
+
+Connect each agent once in **Settings → Agents → Integrations**. This adds a small hook to its configuration (or a plugin, for OpenCode and Pi), leaving the rest untouched and keeping a backup of the original file. Everything stays on your Mac: hooks talk to the notch over a local socket and do nothing when the notch is not running. Codex asks you to trust new hooks once: run `/hooks` in Codex.
+
+Any other tool with Claude Code–style hooks can report too: run `~/.boringnotch/agent-hook <name> <event>` from its hooks, with the event JSON on standard input.
+
+Updates are event-driven and cost nothing while agents are idle.
+
+### Adding a tool
+
+- **An agent with hooks:** add an entry to `AgentIntegrations.all` in `BoringNotchXPCHelper/Monitors/` with where its configuration lives and which events to hook. If it names events or fields differently from Claude Code, map them in `HookEvent`.
+- **A workspace manager:** add an `AgentMonitor` that watches it outside the app sandbox (`BoringNotchXPCHelper/Monitors/`, registered in `AgentEventMonitor.monitorTypes`) and an `AgentProvider` with the same `id` that turns what it publishes into agent sessions (`boringNotch/Agents/Providers/`, registered in `AgentProviders.all`).
+
 ## 📋 Roadmap
 - [x] Playback live activity 🎧
 - [x] Calendar integration 📆

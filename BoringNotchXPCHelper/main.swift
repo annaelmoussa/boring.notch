@@ -28,6 +28,22 @@ class ServiceDelegate: NSObject, NSXPCListenerDelegate {
     }
 }
 
+/// The app streams now playing information through a Perl script that only notices its parent
+/// is gone the next time it writes, so a crashed app could leave it running forever.
+/// Each launch of the helper clears such orphans.
+func stopOrphanedMediaAdapters() {
+    guard let output = Command.run("/bin/ps", ["-axo", "pid=,ppid=,args="]) else { return }
+    for line in output.split(separator: "\n") {
+        let fields = line.split(separator: " ", maxSplits: 2)
+        guard fields.count == 3, fields[1] == "1", fields[2].contains("mediaremote-adapter.pl"),
+              fields[2].contains("MediaRemoteAdapter.framework"), let pid = pid_t(fields[0])
+        else { continue }
+        kill(pid, SIGTERM)
+    }
+}
+
+DispatchQueue.global(qos: .utility).async(execute: stopOrphanedMediaAdapters)
+
 // Create the delegate for the service.
 let delegate = ServiceDelegate()
 

@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var agentsSummary = AgentsSummary.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -65,6 +66,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if showAgentsActivity {
+            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
             && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
@@ -78,6 +81,19 @@ struct ContentView: View {
         }
 
         return chinWidth
+    }
+
+    /// Whether the closed notch shows the music live activity.
+    private var musicIsOnDisplay: Bool {
+        (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
+    }
+
+    /// Agent alerts take over the closed notch; ongoing agent activity yields to music.
+    private var showAgentsActivity: Bool {
+        guard vm.notchState == .closed, !vm.hideOnClosed, Defaults[.showAgents] else { return false }
+        if coordinator.expandingView.show && coordinator.expandingView.type == .agents { return true }
+        let musicActive = (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled
+        return !coordinator.expandingView.show && !musicActive && agentsSummary.isActive
     }
 
     var body: some View {
@@ -287,6 +303,9 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
+                      } else if showAgentsActivity {
+                          AgentsLiveActivity()
+                              .frame(alignment: .center)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
@@ -349,6 +368,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .agents:
+                        AgentsView()
                     }
                 }
                 .transition(
@@ -503,6 +524,12 @@ struct ContentView: View {
     }
 
     private func doOpen() {
+        // The notch opens on what it was showing while closed: the agents when they were on display.
+        if showAgentsActivity || agentsSummary.hasPendingApproval {
+            coordinator.currentView = .agents
+        } else if coordinator.currentView == .agents, musicIsOnDisplay {
+            coordinator.currentView = .home
+        }
         withAnimation(animationSpring) {
             vm.open()
         }
