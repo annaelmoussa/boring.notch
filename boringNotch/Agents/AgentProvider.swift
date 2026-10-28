@@ -77,8 +77,18 @@ func firstAgentLine(_ text: String?) -> String? {
 }
 
 /// The first regular app among `pids`, typically the terminal hosting an agent's process tree.
+/// Agents report the same ancestry on every event, so lookups are remembered while the app runs.
 func hostApplication(among pids: [Int]) -> NSRunningApplication? {
-    pids.lazy
+    hostApplicationsLock.lock()
+    defer { hostApplicationsLock.unlock() }
+    if let cached = hostApplications[pids], cached?.isTerminated != true { return cached }
+    let host = pids.lazy
         .compactMap { NSRunningApplication(processIdentifier: pid_t($0)) }
         .first { $0.activationPolicy == .regular }
+    if hostApplications.count > 256 { hostApplications.removeAll() }
+    hostApplications[pids] = host
+    return host
 }
+
+private let hostApplicationsLock = NSLock()
+nonisolated(unsafe) private var hostApplications: [[Int]: NSRunningApplication?] = [:]

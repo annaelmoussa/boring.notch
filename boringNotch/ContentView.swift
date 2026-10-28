@@ -23,7 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
-    @ObservedObject var agentsManager = AgentsManager.shared
+    @ObservedObject var agentsSummary = AgentsSummary.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -88,7 +88,7 @@ struct ContentView: View {
         guard vm.notchState == .closed, !vm.hideOnClosed, Defaults[.showAgents] else { return false }
         if coordinator.expandingView.show && coordinator.expandingView.type == .agents { return true }
         let musicActive = (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled
-        return !coordinator.expandingView.show && !musicActive && agentsManager.isActive
+        return !coordinator.expandingView.show && !musicActive && agentsSummary.isActive
     }
 
     var body: some View {
@@ -519,7 +519,7 @@ struct ContentView: View {
     }
 
     private func doOpen() {
-        if (coordinator.expandingView.show && coordinator.expandingView.type == .agents) || agentsManager.hasPendingApproval {
+        if (coordinator.expandingView.show && coordinator.expandingView.type == .agents) || agentsSummary.hasPendingApproval {
             coordinator.currentView = .agents
         }
         withAnimation(animationSpring) {

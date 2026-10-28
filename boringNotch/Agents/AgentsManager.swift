@@ -21,6 +21,16 @@ extension Defaults.Keys {
     static let showClaudeUsage = Key<Bool>("showClaudeUsage", default: false)
 }
 
+/// What the rest of the notch needs to know about agents. It changes far less often than the agent
+/// list, so views that only need it are not redrawn on every agent event.
+@MainActor
+final class AgentsSummary: ObservableObject {
+    static let shared = AgentsSummary()
+
+    @Published fileprivate(set) var isActive = false
+    @Published fileprivate(set) var hasPendingApproval = false
+}
+
 /// Receives agent state pushed by the XPC helper and publishes a merged, priority-sorted list.
 @MainActor
 final class AgentsManager: ObservableObject {
@@ -53,6 +63,8 @@ final class AgentsManager: ObservableObject {
     private var containers: [String: AgentSession] = [:]
     /// Latest payload of each provider, keyed by provider id.
     private var latest: [String: Data] = [:]
+    /// Sessions decoded from each provider's payload, reused while that payload is unchanged.
+    private var decoded: [String: (payload: Data, sessions: [AgentSession])] = [:]
 
     var needsInputCount: Int { sessions.filter { $0.status == .needsInput }.count }
     var workingCount: Int { sessions.filter { $0.status == .working }.count }
@@ -191,7 +203,13 @@ final class AgentsManager: ObservableObject {
         let disabled = Defaults[.disabledAgentProviders]
         let all = AgentProviders.all
             .filter { !disabled.contains($0.id) }
-            .flatMap { provider in payloads[provider.id].map(provider.sessions(from:)) ?? [] }
+            .flatMap { provider -> [AgentSession] in
+                guard let payload = payloads[provider.id] else { return [] }
+                if let cached = decoded[provider.id], cached.payload == payload { return cached.sessions }
+                let sessions = provider.sessions(from: payload)
+                decoded[provider.id] = (payload, sessions)
+                return sessions
+            }
 
         // An agent reported both by its own hooks and by the workspace manager it runs in is shown once.
         let containedIDs = Set(all.compactMap(\.containerID))
@@ -242,6 +260,9 @@ final class AgentsManager: ObservableObject {
         if visible != sessions {
             sessions = visible
         }
+        let summary = AgentsSummary.shared
+        if summary.isActive != isActive { summary.isActive = isActive }
+        if summary.hasPendingApproval != hasPendingApproval { summary.hasPendingApproval = hasPendingApproval }
         releaseApprovals()
     }
 

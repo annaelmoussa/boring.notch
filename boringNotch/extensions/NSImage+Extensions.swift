@@ -15,6 +15,20 @@ import CoreImage.CIFilterBuiltins
 
 extension NSImage {
 
+    /// Decodes artwork at most `maxPixelSize` wide or tall. Artwork is only ever shown small, and
+    /// decoding a full-resolution cover costs tens of megabytes.
+    static func artwork(from data: Data, maxPixelSize: Int = 512) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return NSImage(data: data)
+        }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
     
     func averageColor(completion: @escaping (NSColor?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -25,8 +39,9 @@ extension NSImage {
                 return
             }
             
-            let width = cgImage.width
-            let height = cgImage.height
+            // A small rendition averages to the same color as the full image, at a fraction of the cost.
+            let width = min(cgImage.width, 16)
+            let height = min(cgImage.height, 16)
             let totalPixels = width * height
             
             guard let context = CGContext(data: nil,
@@ -42,6 +57,7 @@ extension NSImage {
                 return
             }
             
+            context.interpolationQuality = .medium
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
             
             guard let data = context.data else {
