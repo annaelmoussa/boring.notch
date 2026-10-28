@@ -80,7 +80,7 @@ enum HookProvider: AgentProvider {
     static func focus(_ session: AgentSession) async {
         if await request(["focus": session.id]) == Data("true".utf8) { return }
         await MainActor.run {
-            session.hostPID.flatMap { NSRunningApplication(processIdentifier: $0) }?.activate()
+            _ = session.hostPID.flatMap { NSRunningApplication(processIdentifier: $0) }?.activate()
         }
     }
 

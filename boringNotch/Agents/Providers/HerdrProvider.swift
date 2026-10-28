@@ -78,7 +78,7 @@ enum HerdrProvider: AgentProvider {
         let reply = await XPCHelperClient.shared.agentRequest(id, payload: request ?? Data())
         let ancestors = reply.flatMap { try? JSONDecoder().decode([Int].self, from: $0) } ?? []
         await MainActor.run {
-            hostApplication(among: ancestors)?.activate()
+            _ = hostApplication(among: ancestors)?.activate()
         }
     }
 

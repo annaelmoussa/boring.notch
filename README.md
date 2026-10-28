@@ -115,7 +115,7 @@ Supported agents: Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot CLI, Op
 - **Alerts:** the notch widens, with a sound, when an agent needs input or finishes its work. Several alerts are shown one after another.
 - **Permission requests:** allow or deny an agent's request straight from the notch. Claude Code and OpenCode keep asking in their own window too, and whichever answer comes first wins; other agents get the request back after 20 seconds.
 - **Agents tab:** every agent, most urgent first, with its project and branch, what it is doing or its last reply, and where it runs. Agents that have been done or idle for 30 minutes are hidden.
-- **Jump and reply:** click a row to jump to the agent's exact tab or pane (Ghostty, Terminal, iTerm, tmux, Herdr, Orca), or hover it and choose Reply to type an answer into its terminal.
+- **Jump and reply:** click a row to jump to the agent's exact tab or pane (Ghostty, Terminal, iTerm, tmux, Herdr, Orca), or hover it and choose Reply to type an answer into its terminal. macOS asks once for permission to control the terminal app.
 - **Claude plan usage:** the 5-hour and weekly limits, relayed by Claude Code's own status line, which keeps showing as before.
 
 Connect each agent once in **Settings → Agents → Integrations**. This adds a small hook to its configuration (or a plugin, for OpenCode and Pi), leaving the rest untouched and keeping a backup of the original file. Everything stays on your Mac: hooks talk to the notch over a local socket and do nothing when the notch is not running. Codex asks you to trust new hooks once: run `/hooks` in Codex.
@@ -126,12 +126,8 @@ Updates are event-driven and cost nothing while agents are idle.
 
 ### Adding a tool
 
-Each tool is a pair of small, self-contained files:
-
-1. **`BoringNotchXPCHelper/Monitors/`:** an `AgentMonitor` that watches the tool outside the app sandbox and publishes a payload whenever its agents change. Register it in `AgentEventMonitor.monitorTypes`.
-2. **`boringNotch/Agents/Providers/`:** an `AgentProvider` with the same `id` that turns that payload into agent sessions and brings an agent to the front. Register it in `AgentProviders.all`.
-
-Nothing else in the app refers to a specific tool.
+- **An agent with hooks:** add an entry to `AgentIntegrations.all` in `BoringNotchXPCHelper/Monitors/` with where its configuration lives and which events to hook. If it names events or fields differently from Claude Code, map them in `HookEvent`.
+- **A workspace manager:** add an `AgentMonitor` that watches it outside the app sandbox (`BoringNotchXPCHelper/Monitors/`, registered in `AgentEventMonitor.monitorTypes`) and an `AgentProvider` with the same `id` that turns what it publishes into agent sessions (`boringNotch/Agents/Providers/`, registered in `AgentProviders.all`).
 
 ## 📋 Roadmap
 - [x] Playback live activity 🎧

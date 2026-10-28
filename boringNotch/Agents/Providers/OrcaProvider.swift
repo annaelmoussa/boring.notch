@@ -72,7 +72,7 @@ enum OrcaProvider: AgentProvider {
             _ = await XPCHelperClient.shared.runAgentCLI("orca", arguments: ["terminal", "switch", "--terminal", handle])
         }
         await MainActor.run {
-            NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).first?.activate()
+            _ = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleIdentifier).first?.activate()
         }
     }
 
