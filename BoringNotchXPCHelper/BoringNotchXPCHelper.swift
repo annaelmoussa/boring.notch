@@ -146,6 +146,13 @@ class BoringNotchXPCHelper: NSObject, BoringNotchXPCHelperProtocol {
         AgentEventMonitor.shared.waitForUpdate(after: generation, reply: reply)
     }
 
+    /// Replies with the ancestors of the Herdr client attached to `session` ("" for the default session).
+    @objc func herdrClientAncestors(forSession session: String, with reply: @escaping ([Int]) -> Void) {
+        DispatchQueue.global().async {
+            reply(HerdrClientLocator.ancestors(ofClientFor: session))
+        }
+    }
+
     private static let agentCLIs: Set<String> = ["herdr", "orca"]
     private static let agentCLISearchPaths = [
         "/opt/homebrew/bin",

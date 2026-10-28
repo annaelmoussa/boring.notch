@@ -34,16 +34,17 @@ struct AgentsLiveActivity: View {
                 .resizable()
                 .scaledToFit()
                 .foregroundStyle(status.color)
-                .symbolEffect(.pulse, isActive: status == .working)
                 .frame(width: side, height: side)
 
             Rectangle()
                 .fill(.black)
                 .overlay {
                     if isExpanded, let session = agents.attentionSession {
-                        HStack {
-                            Text(session.title)
+                        HStack(spacing: 6) {
+                            Text(session.agent)
                                 .foregroundStyle(.white)
+                            Text(session.title)
+                                .foregroundStyle(.gray)
                             Spacer(minLength: vm.closedNotchSize.width)
                             Text(session.status.label)
                                 .foregroundStyle(session.status.color)

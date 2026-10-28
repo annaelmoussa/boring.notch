@@ -64,4 +64,6 @@ struct AgentSession: Identifiable, Equatable {
     var since: Date?
     /// Source-specific identifier used to bring the agent to the front.
     let focusTarget: String
+    /// Namespace of `focusTarget` when the source has several, e.g. a named Herdr session.
+    var scope: String? = nil
 }

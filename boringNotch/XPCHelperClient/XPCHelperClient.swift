@@ -274,6 +274,21 @@ final class XPCHelperClient: NSObject {
             return nil
         }
     }
+
+    nonisolated func herdrClientAncestors(forSession session: String) async -> [Int] {
+        do {
+            let service = await MainActor.run {
+                ensureRemoteService()
+            }
+            return try await service.withContinuation { service, continuation in
+                service.herdrClientAncestors(forSession: session) { pids in
+                    continuation.resume(returning: pids)
+                }
+            }
+        } catch {
+            return []
+        }
+    }
 }
 
 extension Notification.Name {

@@ -23,6 +23,7 @@ import Foundation
     // Coding agents (Herdr, Orca), reached outside the app sandbox
     func waitForAgentUpdate(after generation: Int, with reply: @escaping (Int, Data?, Data?) -> Void)
     func runAgentCLI(_ tool: String, arguments: [String], with reply: @escaping (Data?) -> Void)
+    func herdrClientAncestors(forSession session: String, with reply: @escaping ([Int]) -> Void)
 }
 
 /*

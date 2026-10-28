@@ -37,7 +37,7 @@ struct AgentsView: View {
         ].compactMap { $0 }
         return sources.isEmpty
             ? "Enable an agent source in Settings"
-            : "No agents in \(sources.joined(separator: " or "))"
+            : "No recent agents in \(sources.joined(separator: " or "))"
     }
 }
 
@@ -53,7 +53,6 @@ private struct AgentRow: View {
                 Image(systemName: session.status.icon)
                     .font(.system(size: 15))
                     .foregroundStyle(session.status.color)
-                    .symbolEffect(.pulse, isActive: session.status == .working)
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 2) {

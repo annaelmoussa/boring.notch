@@ -12,6 +12,7 @@ extension Defaults.Keys {
     static let showHerdrAgents = Key<Bool>("showHerdrAgents", default: true)
     static let showOrcaAgents = Key<Bool>("showOrcaAgents", default: true)
     static let agentAttentionAlerts = Key<Bool>("agentAttentionAlerts", default: true)
+    static let hideInactiveAgents = Key<Bool>("hideInactiveAgents", default: true)
 }
 
 /// Receives agent state pushed by the XPC helper and publishes a merged, priority-sorted list.
@@ -23,7 +24,15 @@ final class AgentsManager: ObservableObject {
     /// The latest session that started waiting for the user or finished its work.
     @Published private(set) var attentionSession: AgentSession?
 
+    /// Finished or idle agents are hidden once they have been inactive for this long.
+    private static let inactivityLimit: TimeInterval = 30 * 60
+    /// How long each alert stays on screen before the next one, slightly longer than the coordinator's 3 s.
+    private static let alertInterval: Duration = .seconds(3.5)
+
     private var updatesTask: Task<Void, Never>?
+    private var expiryTask: Task<Void, Never>?
+    private var alertTask: Task<Void, Never>?
+    private var pendingAlerts: [AgentSession] = []
     private var cancellables = Set<AnyCancellable>()
     /// When each session entered its status, for sources that do not report it.
     private var statusDates: [String: (status: AgentStatus, date: Date)] = [:]
@@ -45,7 +54,7 @@ final class AgentsManager: ObservableObject {
             .store(in: &cancellables)
 
         // Re-filter the last state when a source is toggled, without waiting for a change.
-        Defaults.publisher(keys: .showHerdrAgents, .showOrcaAgents, options: [])
+        Defaults.publisher(keys: .showHerdrAgents, .showOrcaAgents, .hideInactiveAgents, options: [])
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
                 guard let self else { return }
@@ -85,6 +94,10 @@ final class AgentsManager: ObservableObject {
     private func stop() {
         updatesTask?.cancel()
         updatesTask = nil
+        expiryTask?.cancel()
+        alertTask?.cancel()
+        alertTask = nil
+        pendingAlerts = []
         sessions = []
         statusDates = [:]
         hasReceivedUpdate = false
@@ -97,7 +110,6 @@ final class AgentsManager: ObservableObject {
             + (Defaults[.showOrcaAgents] ? OrcaSource.sessions(from: orca) : [])
 
         let now = Date()
-        let previous = Dictionary(sessions.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
         var dates: [String: (status: AgentStatus, date: Date)] = [:]
 
         let updated = fetched.map { session in
@@ -107,17 +119,37 @@ final class AgentsManager: ObservableObject {
             dates[session.id] = (session.status, session.since ?? now)
             return session
         }
-        .sorted { ($0.status, $1.since ?? now) < ($1.status, $0.since ?? now) }
 
-        if hasReceivedUpdate, let alert = updated.first(where: { needsAttention($0, previous: previous[$0.id]) }) {
-            raiseAttention(for: alert)
+        if hasReceivedUpdate {
+            let alerts = updated.filter { needsAttention($0, previous: statusDates[$0.id]?.status) }
+            if !alerts.isEmpty { raiseAttention(for: alerts) }
         }
-
         statusDates = dates
         hasReceivedUpdate = true
-        if updated != sessions {
-            sessions = updated
+
+        let visible = visibleSessions(updated, now: now)
+            .sorted { ($0.status, $1.since ?? now) < ($1.status, $0.since ?? now) }
+        if visible != sessions {
+            sessions = visible
         }
+    }
+
+    /// Drops agents that finished or went idle long ago, and schedules the next expiry.
+    private func visibleSessions(_ all: [AgentSession], now: Date) -> [AgentSession] {
+        expiryTask?.cancel()
+        guard Defaults[.hideInactiveAgents] else { return all }
+
+        let isInactive = { (session: AgentSession) in session.status == .done || session.status == .idle }
+        let visible = all.filter { !isInactive($0) || now.timeIntervalSince($0.since ?? now) < Self.inactivityLimit }
+        guard let nextExpiry = visible.filter(isInactive).compactMap(\.since).min()?.addingTimeInterval(Self.inactivityLimit) else {
+            return visible
+        }
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(1, nextExpiry.timeIntervalSinceNow)))
+            guard let self, !Task.isCancelled else { return }
+            apply(herdr: latest.herdr, orca: latest.orca)
+        }
+        return visible
     }
 
     /// An agent needs attention when it starts waiting for input or finishes active work.
@@ -126,9 +158,25 @@ final class AgentsManager: ObservableObject {
         return session.status == .needsInput || (session.status == .done && previous == .working)
     }
 
-    private func raiseAttention(for session: AgentSession) {
-        attentionSession = session
-        guard Defaults[.agentAttentionAlerts] else { return }
-        BoringViewCoordinator.shared.toggleExpandingView(status: true, type: .agents)
+    /// Shows alerts one after another, skipping those whose agent has moved on in the meantime.
+    private func raiseAttention(for alerts: [AgentSession]) {
+        guard Defaults[.agentAttentionAlerts] else {
+            attentionSession = alerts.first
+            return
+        }
+        pendingAlerts.removeAll { pending in alerts.contains { $0.id == pending.id } }
+        pendingAlerts += alerts
+        guard alertTask == nil else { return }
+
+        alertTask = Task { [weak self] in
+            while let self, !Task.isCancelled, !pendingAlerts.isEmpty {
+                let alert = pendingAlerts.removeFirst()
+                guard statusDates[alert.id]?.status == alert.status else { continue }
+                attentionSession = alert
+                BoringViewCoordinator.shared.toggleExpandingView(status: true, type: .agents)
+                try? await Task.sleep(for: Self.alertInterval)
+            }
+            if !Task.isCancelled { self?.alertTask = nil }
+        }
     }
 }

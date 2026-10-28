@@ -16,6 +16,9 @@ struct AgentsSettings: View {
                 Defaults.Toggle(key: .agentAttentionAlerts) {
                     Text("Expand the notch when an agent needs input or finishes")
                 }
+                Defaults.Toggle(key: .hideInactiveAgents) {
+                    Text("Hide agents that have been done or idle for 30 minutes")
+                }
             } header: {
                 Text("General")
             }
@@ -30,7 +33,7 @@ struct AgentsSettings: View {
             } header: {
                 Text("Sources")
             } footer: {
-                Text("Agent states are pushed by Herdr and Orca as they change. Jumping to an agent requires the `herdr` and `orca` command line tools in /opt/homebrew/bin, /usr/local/bin or ~/.local/bin.")
+                Text("Agent states are pushed by Herdr and Orca as they change. Named Herdr sessions are followed too. Jumping to an agent requires the `herdr` and `orca` command line tools in /opt/homebrew/bin, /usr/local/bin or ~/.local/bin.")
                     .foregroundStyle(.secondary)
             }
         }

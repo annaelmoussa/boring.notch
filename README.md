@@ -111,9 +111,10 @@ The notch shows what your coding agents are doing in [Herdr](https://herdr.dev) 
 
 - **Closed notch:** a status icon and a counter while agents are working or waiting for you.
 - **Alerts:** the notch widens when an agent needs input or finishes its work.
-- **Agents tab:** every agent, most urgent first, with its workspace, status and elapsed time. Click a row to jump to that agent.
+- **Agents tab:** every agent, most urgent first, with its workspace, status and elapsed time. Click a row to jump to that agent and bring its window forward. Agents that have been done or idle for 30 minutes are hidden.
+- **Several alerts at once** are shown one after another.
 
-Updates are event-driven and cost nothing while agents are idle: Herdr pushes events over its local socket, and Orca's agent status file is watched with kqueue, each change triggering a single request to Orca's local runtime. Jumping to an agent uses the `herdr` and `orca` command line tools, looked up in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. Sources and alerts can be turned on or off in **Settings → Agents**.
+Updates are event-driven and cost nothing while agents are idle: Herdr pushes events over its local socket (the default session and named sessions alike), and Orca's agent status file is watched with kqueue, each change triggering a single request to Orca's local runtime. Jumping to an agent uses the `herdr` and `orca` command line tools, looked up in `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`. Sources and alerts can be turned on or off in **Settings → Agents**.
 
 ## 📋 Roadmap
 - [x] Playback live activity 🎧

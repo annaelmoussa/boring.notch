@@ -60,8 +60,19 @@ enum HerdrSource {
         let snapshot: Snapshot
     }
 
+    /// One entry per running Herdr server, as published by the helper.
+    private struct Session: Decodable {
+        /// Named session, or nil for the default one.
+        let session: String?
+        let response: Response<SnapshotResult>
+    }
+
     static func sessions(from data: Data?) -> [AgentSession] {
-        guard let snapshot = decode(data, as: SnapshotResult.self)?.snapshot else { return [] }
+        guard let data, let servers = try? JSONDecoder().decode([Session].self, from: data) else { return [] }
+        return servers.flatMap { sessions(in: $0.response.result.snapshot, session: $0.session) }
+    }
+
+    private static func sessions(in snapshot: Snapshot, session: String?) -> [AgentSession] {
         let workspaceLabels = Dictionary(
             snapshot.workspaces.map { ($0.workspace_id, $0.label) },
             uniquingKeysWith: { first, _ in first }
@@ -70,20 +81,31 @@ enum HerdrSource {
         return snapshot.agents.compactMap { agent in
             guard let kind = agent.display_agent ?? agent.agent else { return nil }
             return AgentSession(
-                id: "herdr:\(agent.pane_id)",
+                id: "herdr:\(session ?? ""):\(agent.pane_id)",
                 source: .herdr,
                 agent: kind,
                 title: agent.name ?? workspaceLabels[agent.workspace_id] ?? agent.pane_id,
                 detail: firstLine(agent.title),
                 status: Self.status(agent.agent_status),
                 since: nil,
-                focusTarget: agent.pane_id
+                focusTarget: agent.pane_id,
+                scope: session
             )
         }
     }
 
+    /// Focuses the pane in Herdr, then brings the terminal running that Herdr session forward.
     static func focus(_ session: AgentSession) async {
-        _ = await XPCHelperClient.shared.runAgentCLI("herdr", arguments: ["agent", "focus", session.focusTarget])
+        let sessionArguments = session.scope.map { ["--session", $0] } ?? []
+        _ = await XPCHelperClient.shared.runAgentCLI("herdr", arguments: sessionArguments + ["agent", "focus", session.focusTarget])
+
+        let ancestors = await XPCHelperClient.shared.herdrClientAncestors(forSession: session.scope ?? "")
+        await MainActor.run {
+            ancestors.lazy
+                .compactMap { NSRunningApplication(processIdentifier: pid_t($0)) }
+                .first { $0.activationPolicy == .regular }?
+                .activate()
+        }
     }
 
     private static func status(_ raw: String) -> AgentStatus {
