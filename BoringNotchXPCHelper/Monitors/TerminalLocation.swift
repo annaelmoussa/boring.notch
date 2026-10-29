@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct TerminalLocation {
+struct TerminalLocation: Codable {
     /// Process names of terminals whose tabs can be found by tty through AppleScript.
     static let scriptableApps: Set<String> = ["ghostty", "Terminal", "iTerm2"]
 

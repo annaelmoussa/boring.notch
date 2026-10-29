@@ -25,10 +25,12 @@ final class HookMonitor: AgentMonitor {
     static let directory = NSHomeDirectory() + "/.boringnotch"
     static let socketPath = directory + "/agents.sock"
 
-    private struct Session {
+    private struct Session: Codable {
         let id: String
         let agent: String
         let pid: pid_t
+        /// Tells a restored session's process apart from a later one that reused its pid.
+        let started: Double?
         let ancestors: [Int]
         let terminal: TerminalLocation
         let container: [String: String]?
@@ -73,6 +75,9 @@ final class HookMonitor: AgentMonitor {
     /// The `rate_limits` object of Claude Code's latest status line update, kept on disk across restarts.
     private var rateLimits: [String: Any] = [:]
     private static let rateLimitsPath = directory + "/claude-rate-limits.json"
+    /// Known sessions, so agents already running when the helper restarts show up at once
+    /// instead of at their next event.
+    private static let sessionsPath = directory + "/sessions.json"
 
     init(queue: DispatchQueue, onChange: @escaping (Data?) -> Void) {
         self.queue = queue
@@ -83,6 +88,7 @@ final class HookMonitor: AgentMonitor {
         {
             rateLimits = saved
         }
+        restoreSessions()
         listener = LineSocketListener(path: Self.socketPath, queue: queue) { [weak self] socket in
             self?.receive(on: socket)
         }
@@ -279,7 +285,7 @@ final class HookMonitor: AgentMonitor {
 
         let repository = Self.repository(containing: event.cwd)
         return Session(
-            id: id, agent: event.agent, pid: pid, ancestors: ancestors.map(Int.init),
+            id: id, agent: event.agent, pid: pid, started: ProcessInfoReader.startTime(of: pid), ancestors: ancestors.map(Int.init),
             terminal: TerminalLocation(program: event.terminal, tty: ProcessInfoReader.tty(of: pid),
                                        app: ancestors.lazy.compactMap { ProcessInfoReader.info($0)?.name }.first(where: TerminalLocation.scriptableApps.contains),
                                        tmuxPane: event.tmuxPane, tmuxSocket: event.tmuxSocket),
@@ -339,8 +345,23 @@ final class HookMonitor: AgentMonitor {
     }
 
     private func publish() {
-        let list = sessions.values.sorted { $0.id < $1.id }.map(\.json)
-        onChange(try? JSONSerialization.data(withJSONObject: ["sessions": list], options: .sortedKeys))
+        let list = sessions.values.sorted { $0.id < $1.id }
+        onChange(try? JSONSerialization.data(withJSONObject: ["sessions": list.map(\.json)], options: .sortedKeys))
+        try? JSONEncoder().encode(list).write(to: URL(fileURLWithPath: Self.sessionsPath), options: .atomic)
+    }
+
+    /// Keeps the saved sessions whose agent is still running. Their held permission requests
+    /// did not survive the restart, so the agents answer those in their own interface.
+    private func restoreSessions() {
+        guard let data = FileManager.default.contents(atPath: Self.sessionsPath),
+              let saved = try? JSONDecoder().decode([Session].self, from: data)
+        else { return }
+        for var session in saved where session.started != nil && ProcessInfoReader.startTime(of: session.pid) == session.started {
+            session.approval = nil
+            session.approvalBlocksAgent = false
+            sessions[session.id] = session
+            watchExit(of: session.pid)
+        }
     }
 
     // MARK: - Formatting
@@ -499,6 +520,12 @@ enum ProcessInfoReader {
             current = info(parent)?.parent
         }
         return chain
+    }
+
+    /// When `pid` started, in seconds since 1970.
+    static func startTime(of pid: pid_t) -> Double? {
+        guard let start = kinfo(pid)?.kp_proc.p_starttime else { return nil }
+        return Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000
     }
 
     /// The controlling terminal of `pid`, e.g. "/dev/ttys004".
